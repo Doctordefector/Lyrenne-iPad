@@ -59,6 +59,11 @@ final class Player {
         if queue.count == 1 { start(0) }
     }
 
+    func playNext(_ song: Song) {
+        if queue.isEmpty { return enqueue(song) }
+        queue.insert(song, at: index + 1)
+    }
+
     func toggle() { av.timeControlStatus == .paused ? av.play() : av.pause() }
 
     func next() {
@@ -85,7 +90,7 @@ final class Player {
         loadTask?.cancel()
         loadTask = Task {
             do {
-                let url = try await InnerTube.streamURL(for: song.id)
+                let url = try await Downloads.file(for: song.id) ?? fetchToCache(song.id)
                 guard !Task.isCancelled else { return }
                 try? AVAudioSession.sharedInstance().setActive(true)
                 av.replaceCurrentItem(with: AVPlayerItem(url: url))
@@ -109,6 +114,21 @@ final class Player {
                 queue += radio.filter { !known.contains($0.id) }
             }
         }
+    }
+
+    /// Streams are fetched whole and played from a file: googlevideo refuses the open-ended
+    /// Range requests AVPlayer streams with (see Downloads.fetchAudio). A typical song is ~0.3 s.
+    private func fetchToCache(_ id: String) async throws -> URL {
+        let data = try await Downloads.fetchAudio(id)
+        let tmp = FileManager.default.temporaryDirectory
+        let file = tmp.appendingPathComponent("stream-\(id).m4a")
+        try data.write(to: file, options: .atomic)
+        // Only the playing song's file is kept; AVPlayer keeps an open file readable after unlink
+        for old in (try? FileManager.default.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
+        where old.lastPathComponent.hasPrefix("stream-") && old != file {
+            try? FileManager.default.removeItem(at: old)
+        }
+        return file
     }
 
     private func loadArtwork(_ url: URL?) async -> UIImage? {

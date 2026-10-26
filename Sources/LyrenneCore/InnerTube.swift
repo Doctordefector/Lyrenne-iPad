@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public struct Song: Identifiable, Hashable, Sendable {
+public struct Song: Identifiable, Hashable, Codable, Sendable {
     public let id: String // YouTube videoId
     public let title: String
     public let artist: String
@@ -30,6 +30,9 @@ public enum InnerTube {
     // ponytail: only clients whose URLs need no signature deobfuscation; desktop's web clients need
     // NewPipe's JS player, which has no iOS port. Add them if all of these stop working.
     static let streamClients = [
+        Client(name: "VISIONOS", version: "0.1", id: "101",
+               userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+               extra: ["osName": "visionOS", "osVersion": "1.3.21O771", "deviceMake": "Apple", "deviceModel": "RealityDevice14,1"]),
         Client(name: "ANDROID_VR", version: "1.65.10", id: "28",
                userAgent: "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
                extra: ["osName": "Android", "osVersion": "12L", "deviceMake": "Oculus", "deviceModel": "Quest 3", "androidSdkVersion": "32"],
@@ -48,12 +51,14 @@ public enum InnerTube {
 
     static let filterSongs = "EgWKAQIIAWoKEAkQBRAKEAMQBA=="
 
-    static func post(_ endpoint: String, client: Client, body: [String: Any]) async throws -> [String: Any] {
+    static func post(_ endpoint: String, client: Client, body: [String: Any], auth: Bool = false) async throws -> [String: Any] {
         var context: [String: Any] = ["clientName": client.name, "clientVersion": client.version, "hl": "en", "gl": "US"]
         context.merge(client.extra) { $1 }
         if client.userAgentInContext { context["userAgent"] = client.userAgent }
+        if let visitorData { context["visitorData"] = visitorData }
         var payload = body
         payload["context"] = ["client": context]
+        if auth, let dataSyncId { payload["context"] = ["client": context, "user": ["onBehalfOfUser": dataSyncId]] }
 
         var req = URLRequest(url: URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false")!)
         req.httpMethod = "POST"
@@ -64,9 +69,21 @@ public enum InnerTube {
             "X-YouTube-Client-Version": client.version, "Origin": "https://music.youtube.com",
             "Referer": "https://music.youtube.com/",
         ] { req.setValue(v, forHTTPHeaderField: k) }
+        if auth {
+            // Our cookie string, not whatever URLSession's jar picked up
+            req.httpShouldHandleCookies = false
+            for (k, v) in authHeaders() { req.setValue(v, forHTTPHeaderField: k) }
+        }
+        if let visitorData { req.setValue(visitorData, forHTTPHeaderField: "X-Goog-Visitor-Id") }
         let (data, _) = try await URLSession.shared.data(for: req)
-        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        let json = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if visitorData == nil { visitorData = (json["responseContext"] as? [String: Any])?["visitorData"] as? String }
+        return json
     }
+
+    /// YouTube's id for this anonymous visitor, from the first response that carries one.
+    /// Without it the Android VR clients answer LOGIN_REQUIRED ("confirm you're not a bot").
+    nonisolated(unsafe) public static var visitorData: String?
 
     public static func search(_ query: String) async throws -> [Song] {
         let json = try await post("search", client: webRemix, body: ["query": query, "params": filterSongs])
@@ -86,6 +103,7 @@ public enum InnerTube {
     /// Same order as desktop's getStreamUrl: each client's URL gets a one-byte check (issue #17),
     /// and if none passes the first is returned anyway so a misfiring check costs nothing.
     public static func streamURL(for videoId: String) async throws -> URL {
+        if visitorData == nil { _ = try? await post("visitor_id", client: webRemix, body: [:]) }
         var unchecked: URL?
         for client in streamClients {
             guard let json = try? await post("player", client: client, body: ["videoId": videoId]),
@@ -97,16 +115,19 @@ public enum InnerTube {
                 .filter { ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true && $0["url"] != nil }
                 .max { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) }
             guard let s = best?["url"] as? String, let url = URL(string: s) else { continue }
-            if await isServed(url) { return url }
+            // Probe the last byte: URLs that want a PO token serve only the first MiB, so a
+            // first-byte check (desktop's) passes them
+            let length = (best?["contentLength"] as? String).flatMap(Int.init) ?? 1
+            if await isServed(url, at: length - 1) { return url }
             unchecked = unchecked ?? url
         }
         if let unchecked { return unchecked }
         throw URLError(.resourceUnavailable)
     }
 
-    public static func isServed(_ url: URL) async -> Bool {
+    public static func isServed(_ url: URL, at byte: Int = 0) async -> Bool {
         var req = URLRequest(url: url, timeoutInterval: 10)
-        req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        req.setValue("bytes=\(byte)-\(byte)", forHTTPHeaderField: "Range")
         let code = (try? await URLSession.shared.data(for: req))?.1 as? HTTPURLResponse
         return (200..<300).contains(code?.statusCode ?? 0)
     }
@@ -137,7 +158,7 @@ public enum InnerTube {
         return (thumbs.last?["url"] as? String).flatMap(URL.init(string:))
     }
 
-    private static func find(_ key: String, inArrayOf node: Any?) -> [[String: Any]] {
+    static func find(_ key: String, inArrayOf node: Any?) -> [[String: Any]] {
         if let d = node as? [String: Any] {
             if let a = d[key] as? [[String: Any]] { return a }
             for v in d.values { let r = find(key, inArrayOf: v); if !r.isEmpty { return r } }
@@ -149,9 +170,10 @@ public enum InnerTube {
         guard let id = (r["playlistItemData"] as? [String: Any])?["videoId"] as? String else { return nil }
         let cols = (r["flexColumns"] as? [[String: Any]])?.map { $0["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any] ?? [:] } ?? []
         let title = cols.first.flatMap { text($0["text"]) } ?? ""
-        // Second column reads "Artist • Album • 3:45"
+        // Search: second column reads "Artist • Album • 3:45". Playlists: just the artist, duration in a fixed column
         let parts = cols.count > 1 ? (text(cols[1]["text"]) ?? "").components(separatedBy: " • ") : []
-        let duration = parts.last.flatMap { $0.contains(":") ? $0 : nil }
+        let fixed = (r["fixedColumns"] as? [[String: Any]])?.first?["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
+        let duration = text(fixed?["text"]) ?? parts.last.flatMap { $0.contains(":") ? $0 : nil }
         return Song(id: id, title: title, artist: parts.first ?? "", thumbnail: thumbnail(r["thumbnail"]), duration: duration)
     }
 }

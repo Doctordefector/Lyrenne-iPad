@@ -4,41 +4,58 @@ import LyrenneCore
 @main
 struct LyrenneApp: App {
     @State private var player = Player()
+    @State private var session = Session()
+    @State private var downloads = DownloadStore()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(player)
+                .environment(session)
+                .environment(downloads)
                 .preferredColorScheme(.dark)
         }
     }
 }
 
 struct ContentView: View {
-    @Environment(Player.self) private var player
-    @State private var tab = "Search"
+    // LYRENNE_TAB picks the starting tab (CI screenshots); otherwise Search
+    @State private var tab = ProcessInfo.processInfo.environment["LYRENNE_TAB"] ?? "Search"
+    // Both columns side by side even in portrait; the sidebar button still hides it
+    @State private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                Picker("", selection: $tab) {
-                    Text("Search").tag("Search")
-                    Text("Queue").tag("Queue")
+        NavigationSplitView(columnVisibility: $columns) {
+            // Its own stack, so opening a playlist pushes in the sidebar and Now Playing stays put
+            NavigationStack {
+                VStack(spacing: 0) {
+                    Picker("", selection: $tab) {
+                        ForEach(["Search", "Library", "Downloads", "Queue"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding()
+                    switch tab {
+                    case "Library": LibraryView()
+                    case "Downloads": DownloadsView()
+                    case "Queue": QueueView()
+                    default: SearchView()
+                    }
                 }
-                .pickerStyle(.segmented)
-                .padding()
-                if tab == "Search" { SearchView() } else { QueueView() }
+                .navigationTitle("Lyrenne")
+                .navigationDestination(for: Playlist.self) { PlaylistView(playlist: $0) }
             }
-            .navigationTitle("Lyrenne")
+            .navigationSplitViewColumnWidth(min: 340, ideal: 400)
         } detail: {
             NowPlayingView()
         }
+        .navigationSplitViewStyle(.balanced)
     }
 }
 
 struct SongRow: View {
     let song: Song
     var playing = false
+    @Environment(DownloadStore.self) private var downloads
 
     var body: some View {
         HStack(spacing: 12) {
@@ -50,6 +67,11 @@ struct SongRow: View {
                 Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
+            if downloads.isDownloaded(song.id) {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.secondary).accessibilityLabel("Downloaded")
+            } else if downloads.isQueued(song.id) {
+                ProgressView().controlSize(.small)
+            }
             if let d = song.duration { Text(d).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
         }
     }
@@ -65,18 +87,25 @@ struct SearchView: View {
         List(Array(results.enumerated()), id: \.element.id) { i, song in
             Button { player.play(Array(results[i...]), at: 0) } label: { SongRow(song: song) }
                 .buttonStyle(.plain)
-                .contextMenu { Button("Add to queue", systemImage: "text.badge.plus") { player.enqueue(song) } }
+                .songActions(song)
         }
         .listStyle(.plain)
         .overlay { if loading { ProgressView() } }
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Songs, artists")
-        .onSubmit(of: .search) {
-            loading = true
-            Task {
-                results = (try? await InnerTube.search(query)) ?? []
-                loading = false
-            }
+        .onSubmit(of: .search) { Task { await search() } }
+        .task {
+            // LYRENNE_DEMO="query": search and play the first result (CI screenshots)
+            guard results.isEmpty, let demo = ProcessInfo.processInfo.environment["LYRENNE_DEMO"] else { return }
+            query = demo
+            await search()
+            if !results.isEmpty { player.play(results, at: 0) }
         }
+    }
+
+    private func search() async {
+        loading = true
+        results = (try? await InnerTube.search(query)) ?? []
+        loading = false
     }
 }
 
@@ -90,6 +119,7 @@ struct QueueView: View {
             ForEach(Array(player.queue.enumerated()), id: \.offset) { i, song in
                 Button { player.start(i) } label: { SongRow(song: song, playing: i == player.index) }
                     .buttonStyle(.plain)
+                    .songActions(song)
             }
             .onDelete { set in
                 // ponytail: removing the playing song just leaves it playing until it ends

@@ -1,5 +1,6 @@
 # Builds an unsigned Lyrenne.ipa on a GitHub macOS runner, which already has Xcode,
 # so nobody needs a Mac or Xcode.xip. Sideloadly/AltStore sign it when installing.
+# Also runs the app in an iPad simulator and uploads screenshots, to see it working.
 name: Build IPA
 
 on:
@@ -19,3 +20,41 @@ jobs:
         with:
           name: Lyrenne-iPad
           path: xtool/Lyrenne.ipa
+
+  simulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xtool
+        run: brew install xtool-org/tap/xtool
+      - name: Build for the simulator
+        run: |
+          xtool dev build --triple arm64-apple-ios-simulator
+          codesign --force --sign - xtool/Lyrenne.app
+      - name: Run on an iPad simulator
+        run: |
+          set -x
+          ipad=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for r,ds in json.load(sys.stdin)["devices"].items() for d in ds if "iPad" in d["name"]))')
+          xcrun simctl boot "$ipad"
+          xcrun simctl bootstatus "$ipad"
+          xcrun simctl install "$ipad" xtool/Lyrenne.app
+          mkdir -p shots
+          # Search, play the first result, then show Now Playing with lyrics
+          SIMCTL_CHILD_LYRENNE_DEMO="Daft Punk Get Lucky" xcrun simctl launch "$ipad" com.lyrenne.ipad
+          sleep 40
+          xcrun simctl io "$ipad" screenshot shots/1-playing.png
+          xcrun simctl spawn "$ipad" launchctl list | grep -q com.lyrenne.ipad || { echo "app is not running (crashed?)"; exit 1; }
+          for tab in Library Downloads Queue; do
+            xcrun simctl terminate "$ipad" com.lyrenne.ipad || true
+            SIMCTL_CHILD_LYRENNE_TAB=$tab xcrun simctl launch "$ipad" com.lyrenne.ipad
+            sleep 8
+            xcrun simctl io "$ipad" screenshot "shots/2-$tab.png"
+          done
+      - name: Crash logs, if any
+        if: always()
+        run: ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lyrenne && cat ~/Library/Logs/DiagnosticReports/*Lyrenne* | head -80 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-screenshots
+          path: shots/
