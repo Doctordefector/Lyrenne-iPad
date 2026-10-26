@@ -227,7 +227,7 @@ struct LibraryView: View {
                     } description: {
                         Text(session.message ?? "Sign in with your Google account to see your playlists and liked songs.")
                     } actions: {
-                        Button("Sign in to YouTube Music") { showLogin = true }
+                        Button("Sign in") { showLogin = true } // the full "…to YouTube Music" was cut short in the sidebar
                             .buttonStyle(.borderedProminent).controlSize(.large).foregroundStyle(Color.onGold)
                     }
                     .listRowSeparator(.hidden)
