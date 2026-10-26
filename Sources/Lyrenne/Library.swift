@@ -119,11 +119,12 @@ struct LibraryView: View {
                                 Image(systemName: p.id == Playlist.likedSongs.id ? "heart.fill" : "music.note.list")
                                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.2))
                             }
-                            .frame(width: 52, height: 52)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            VStack(alignment: .leading) {
+                            .frame(width: 56, height: 56)
+                            .foregroundStyle(Color.gold)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(p.title).lineLimit(1)
-                                Text(p.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text(p.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                     }
@@ -132,14 +133,19 @@ struct LibraryView: View {
                 .overlay { if loading && playlists.isEmpty { ProgressView() } }
                 .refreshable { await load() }
                 .task { if playlists.isEmpty { await load() } }
-                .toolbar { Button("Sign out", role: .destructive) { session.signOut(); playlists = [] } }
+                .toolbar {
+                    Menu("Account", systemImage: "person.crop.circle") {
+                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { session.signOut(); playlists = [] }
+                    }
+                }
             } else {
                 ContentUnavailableView {
                     Label("Your library", systemImage: "person.crop.circle")
                 } description: {
                     Text(session.message ?? "Sign in with your Google account to see your playlists and liked songs.")
                 } actions: {
-                    Button("Sign in to YouTube Music") { showLogin = true }.buttonStyle(.borderedProminent)
+                    Button("Sign in to YouTube Music") { showLogin = true }
+                        .buttonStyle(.borderedProminent).controlSize(.large).foregroundStyle(Color.onGold)
                 }
             }
         }
@@ -173,22 +179,52 @@ struct PlaylistView: View {
     @State private var loading = true
 
     var body: some View {
-        List(Array(songs.enumerated()), id: \.offset) { i, song in
-            Button { player.play(songs, at: i) } label: { SongRow(song: song) }
-                .buttonStyle(.plain)
-                .songActions(song)
+        List {
+            header.listRowSeparator(.hidden)
+            ForEach(Array(songs.enumerated()), id: \.offset) { i, song in
+                Button { player.play(songs, at: i) } label: { SongRow(song: song) }
+                    .buttonStyle(.plain)
+                    .songActions(song)
+            }
         }
         .listStyle(.plain)
         .overlay { if loading { ProgressView() } else if songs.isEmpty { ContentUnavailableView("Empty playlist", systemImage: "music.note.list") } }
         .navigationTitle(playlist.title)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            Button("Play", systemImage: "play.fill") { player.play(songs, at: 0) }.disabled(songs.isEmpty)
-            Button("Shuffle", systemImage: "shuffle") { player.play(songs.shuffled(), at: 0) }.disabled(songs.isEmpty)
             Button("Download all", systemImage: "arrow.down.circle") { downloads.download(songs) }.disabled(songs.isEmpty)
         }
         .task {
             songs = (try? await InnerTube.playlistSongs(playlist.id)) ?? []
             loading = false
         }
+    }
+
+    /// Cover, title, and Play / Shuffle where the thumb reaches them
+    private var header: some View {
+        VStack(spacing: 14) {
+            AsyncImage(url: playlist.thumbnail) { $0.resizable().scaledToFill() } placeholder: {
+                Image(systemName: playlist.id == Playlist.likedSongs.id ? "heart.fill" : "music.note.list")
+                    .font(.system(size: 56)).foregroundStyle(Color.gold)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.gold.opacity(0.12))
+            }
+            .frame(width: 180, height: 180)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.4), radius: 16, y: 8)
+            VStack(spacing: 2) {
+                Text(playlist.title).font(.title3.bold()).multilineTextAlignment(.center)
+                Text(loading ? playlist.subtitle : "\(songs.count) songs").font(.subheadline).foregroundStyle(.secondary)
+            }
+            HStack {
+                Button { player.play(songs, at: 0) } label: { Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent).foregroundStyle(Color.onGold)
+                Button { player.play(songs.shuffled(), at: 0) } label: { Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity) }
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.large)
+            .disabled(songs.isEmpty)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
     }
 }

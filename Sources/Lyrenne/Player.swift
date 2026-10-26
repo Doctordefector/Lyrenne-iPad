@@ -125,7 +125,7 @@ final class Player {
                 prefetchNext()
             } catch {
                 guard !Task.isCancelled else { return }
-                self.error = "Could not load audio stream:\n\(error.localizedDescription)"
+                self.error = error.localizedDescription
             }
             lyrics = await lyr
             guard !Task.isCancelled else { return }

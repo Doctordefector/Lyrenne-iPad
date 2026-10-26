@@ -1,0 +1,3 @@
+# Same line endings on Windows, WSL, Linux and macOS checkouts, whatever core.autocrlf says
+* text=auto eol=lf
+*.png binary

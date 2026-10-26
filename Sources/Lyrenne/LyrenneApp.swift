@@ -1,6 +1,12 @@
 import SwiftUI
 import LyrenneCore
 
+extension Color {
+    /// Desktop's accent (Theme.kt LyrenneGoldLight) and the dark text that sits on it
+    static let gold = Color(red: 0xE3 / 255, green: 0xC0 / 255, blue: 0x89 / 255)
+    static let onGold = Color(red: 0x2A / 255, green: 0x1B / 255, blue: 0x06 / 255)
+}
+
 @main
 struct LyrenneApp: App {
     @State private var player = Player()
@@ -15,6 +21,7 @@ struct LyrenneApp: App {
                 .environment(session)
                 .environment(downloads)
                 .preferredColorScheme(.dark)
+                .tint(.gold)
         }
         .onChange(of: scenePhase) { _, phase in if phase == .active { downloads.refresh() } }
     }
@@ -31,11 +38,7 @@ struct ContentView: View {
             // Its own stack, so opening a playlist pushes in the sidebar and Now Playing stays put
             NavigationStack {
                 VStack(spacing: 0) {
-                    Picker("", selection: $tab) {
-                        ForEach(["Search", "Library", "Downloads", "Queue"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding()
+                    TabBar(tab: $tab)
                     switch tab {
                     case "Library": LibraryView()
                     case "Downloads": DownloadsView()
@@ -54,19 +57,59 @@ struct ContentView: View {
     }
 }
 
+/// Icon over label, like desktop's rail. A segmented picker cut "Downloads" short.
+struct TabBar: View {
+    @Binding var tab: String
+    private let tabs = [("Search", "magnifyingglass"), ("Library", "music.note.house"),
+                        ("Downloads", "arrow.down.circle"), ("Queue", "list.bullet")]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(tabs, id: \.0) { name, icon in
+                let on = tab == name
+                Button { tab = name } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: icon).font(.title3).symbolVariant(on ? .fill : .none)
+                        Text(name).font(.caption2.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(on ? Color.gold : .secondary)
+                    .background(on ? Color.gold.opacity(0.14) : .clear, in: .rect(cornerRadius: 12))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        .animation(.snappy, value: tab)
+    }
+}
+
 struct SongRow: View {
     let song: Song
-    var playing = false
+    @Environment(Player.self) private var player
     @Environment(DownloadStore.self) private var downloads
 
     var body: some View {
+        let playing = player.current?.id == song.id
         HStack(spacing: 12) {
             AsyncImage(url: song.thumbnail) { $0.resizable().scaledToFill() } placeholder: { Color.secondary.opacity(0.2) }
-                .frame(width: 44, height: 44)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            VStack(alignment: .leading) {
-                Text(song.title).lineLimit(1).fontWeight(playing ? .bold : .regular)
-                Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .frame(width: 48, height: 48)
+                .overlay {
+                    if playing {
+                        Color.black.opacity(0.5)
+                        Image(systemName: "waveform").foregroundStyle(Color.gold)
+                            .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(song.title).lineLimit(1).fontWeight(playing ? .semibold : .regular)
+                    .foregroundStyle(playing ? Color.gold : .primary)
+                Text(song.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if downloads.isDownloaded(song.id) {
@@ -76,6 +119,7 @@ struct SongRow: View {
             }
             if let d = song.duration { Text(d).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
         }
+        .contentShape(.rect)
     }
 }
 
@@ -83,6 +127,7 @@ struct SearchView: View {
     @Environment(Player.self) private var player
     @State private var query = ""
     @State private var results: [Song] = []
+    @State private var searched = "" // the query the results are for
     @State private var loading = false
 
     var body: some View {
@@ -92,12 +137,21 @@ struct SearchView: View {
                 .songActions(song)
         }
         .listStyle(.plain)
-        .overlay { if loading { ProgressView() } }
+        .overlay {
+            if loading {
+                ProgressView()
+            } else if results.isEmpty && searched.isEmpty {
+                ContentUnavailableView("Search YouTube Music", systemImage: "magnifyingglass",
+                                       description: Text("Tap a song to play it, and everything below it after."))
+            } else if results.isEmpty {
+                ContentUnavailableView.search(text: searched)
+            }
+        }
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Songs, artists")
         .onSubmit(of: .search) { Task { await search() } }
         .task {
             // LYRENNE_DEMO="query": search and play the first result (CI screenshots)
-            guard results.isEmpty, let demo = ProcessInfo.processInfo.environment["LYRENNE_DEMO"] else { return }
+            guard results.isEmpty, let demo = ProcessInfo.processInfo.environment["LYRENNE_DEMO"], demo != "downloads" else { return }
             query = demo
             await search()
             if !results.isEmpty { player.play(results, at: 0) }
@@ -107,6 +161,7 @@ struct SearchView: View {
     private func search() async {
         loading = true
         results = (try? await InnerTube.search(query)) ?? []
+        searched = query
         loading = false
     }
 }
@@ -117,9 +172,9 @@ struct QueueView: View {
     var body: some View {
         @Bindable var player = player
         List {
-            Toggle("Autoplay similar songs", isOn: $player.autoplay)
+            Toggle(isOn: $player.autoplay) { Label("Autoplay similar songs", systemImage: "infinity") }
             ForEach(Array(player.queue.enumerated()), id: \.offset) { i, song in
-                Button { player.start(i) } label: { SongRow(song: song, playing: i == player.index) }
+                Button { player.start(i) } label: { SongRow(song: song) }
                     .buttonStyle(.plain)
                     .songActions(song)
             }
@@ -130,6 +185,12 @@ struct QueueView: View {
             }
         }
         .listStyle(.plain)
+        .overlay {
+            if player.queue.isEmpty {
+                ContentUnavailableView("Queue is empty", systemImage: "list.bullet",
+                                       description: Text("Songs you play, and the ones autoplay picks, line up here."))
+            }
+        }
     }
 }
 
@@ -139,8 +200,8 @@ struct NowPlayingView: View {
 
     var body: some View {
         if let song = player.current {
-            HStack(spacing: 32) {
-                VStack(spacing: 20) {
+            HStack(spacing: 40) {
+                VStack(spacing: 24) {
                     // The full-size cover, with the list's small thumbnail (already loaded) until it
                     // arrives. Keyed by song: reused for the next song, AsyncImage could keep
                     // showing the previous cover.
@@ -150,44 +211,123 @@ struct NowPlayingView: View {
                         .id(song.id)
                         .frame(maxWidth: 420, maxHeight: 420)
                         .aspectRatio(1, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .shadow(radius: 20)
-                    VStack {
-                        Text(song.title).font(.title2.bold()).lineLimit(2).multilineTextAlignment(.center)
-                        Text(song.artist).foregroundStyle(.secondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
+                        // Shrinks a little while paused, like Music
+                        .scaleEffect(player.isPlaying || player.duration == 0 ? 1 : 0.88)
+                        .animation(.spring(duration: 0.5, bounce: 0.3), value: player.isPlaying)
+                    VStack(spacing: 4) {
+                        Text(song.title).font(.title2.bold()).lineLimit(2)
+                        Text(song.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    if let e = player.error { Text(e).foregroundStyle(.red).font(.caption) }
-                    // Only a drag seeks. Seeking from the binding also fired when the range changed
-                    // under it at a song switch, sending the new song to the old one's position.
-                    Slider(value: Binding(get: { scrub ?? player.time }, set: { if scrub != nil { scrub = $0 } }),
-                           in: 0...max(player.duration, 1)) { dragging in
-                        if dragging { scrub = player.time } else if let t = scrub { player.seek(t); scrub = nil }
+                    .multilineTextAlignment(.center)
+                    if let e = player.error {
+                        PlayError(details: e)
+                    } else {
+                        progress
                     }
-                    .disabled(player.duration == 0)
-                    HStack {
-                        Text(format(scrub ?? player.time)); Spacer(); Text(format(player.duration))
-                    }
-                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                    HStack(spacing: 48) {
-                        Button { player.previous() } label: { Image(systemName: "backward.fill") }
-                        Button { player.toggle() } label: { Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 64)) }
-                        Button { player.next() } label: { Image(systemName: "forward.fill") }
-                    }
-                    .font(.title)
-                    .buttonStyle(.plain)
+                    controls
                 }
                 .frame(maxWidth: 420)
                 LyricsView()
             }
-            .padding(32)
+            .padding(40)
+            .background { Backdrop(url: song.artwork ?? song.thumbnail).id(song.id) }
+            .animation(.easeInOut(duration: 0.6), value: song.id)
         } else {
-            ContentUnavailableView("Nothing playing", systemImage: "music.note", description: Text("Search for a song to start listening."))
+            ContentUnavailableView("Nothing playing", systemImage: "music.note",
+                                   description: Text("Search for a song, or open your library, to start listening."))
         }
+    }
+
+    private var progress: some View {
+        VStack(spacing: 6) {
+            // Only a drag seeks. Seeking from the binding also fired when the range changed
+            // under it at a song switch, sending the new song to the old one's position.
+            Slider(value: Binding(get: { scrub ?? player.time }, set: { if scrub != nil { scrub = $0 } }),
+                   in: 0...max(player.duration, 1)) { dragging in
+                if dragging { scrub = player.time } else if let t = scrub { player.seek(t); scrub = nil }
+            }
+            .tint(.white)
+            .disabled(player.duration == 0)
+            HStack {
+                Text(format(scrub ?? player.time)); Spacer(); Text(format(player.duration))
+            }
+            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 56) {
+            Button { player.previous() } label: { Image(systemName: "backward.fill") }
+                .accessibilityLabel("Previous")
+            Button { player.toggle() } label: {
+                ZStack {
+                    // Still fetching the song: a spinner where the play button goes
+                    if player.duration == 0 && player.error == nil {
+                        ProgressView().controlSize(.large).frame(width: 72, height: 72)
+                    } else {
+                        Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 72))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+            }
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            Button { player.next() } label: { Image(systemName: "forward.fill") }
+                .accessibilityLabel("Next")
+        }
+        .font(.title)
+        .foregroundStyle(.white)
+        .buttonStyle(.plain)
     }
 
     private func format(_ t: TimeInterval) -> String {
         guard t.isFinite else { return "0:00" }
         return String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+}
+
+/// The cover, blurred and darkened, behind the whole Now Playing column
+struct Backdrop: View {
+    let url: URL?
+
+    var body: some View {
+        Color.black
+            .overlay {
+                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.clear }
+                    .blur(radius: 80, opaque: true)
+                    .saturation(1.3)
+                    .overlay(Color.black.opacity(0.45))
+            }
+            .clipped()
+            .ignoresSafeArea()
+            .transition(.opacity)
+    }
+}
+
+/// A short message with the next steps; the per-client reasons are behind Details
+struct PlayError: View {
+    let details: String
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Label("Couldn't play this song", systemImage: "exclamationmark.triangle.fill")
+                .font(.callout.weight(.semibold))
+            HStack {
+                Button("Try again", systemImage: "arrow.clockwise") { player.start(player.index) }
+                Button("Skip", systemImage: "forward.end") { player.next() }
+            }
+            .buttonStyle(.bordered)
+            DisclosureGroup("Details") {
+                Text(details).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
     }
 }
 
@@ -200,22 +340,32 @@ struct LyricsView: View {
         let active = synced ? player.lyrics.lastIndex { $0.time <= player.time } : nil
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if player.lyrics.isEmpty { Text("No lyrics").foregroundStyle(.secondary) }
+                VStack(alignment: .leading, spacing: 22) {
                     ForEach(Array(player.lyrics.enumerated()), id: \.offset) { i, line in
                         Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(.title3.weight(i == active ? .bold : .regular))
-                            .foregroundStyle(i == active || !synced ? .primary : .secondary)
+                            .font(synced ? .system(size: 32, weight: .bold) : .title2.weight(.semibold))
+                            .foregroundStyle(.white.opacity(i == active || !synced ? 1 : 0.35))
+                            .scaleEffect(i == active ? 1.03 : 1, anchor: .leading)
+                            .animation(.easeOut(duration: 0.3), value: active)
                             .id(i)
                             .onTapGesture { if synced { player.seek(line.time) } }
                     }
                 }
-                .padding(.vertical, 200)
+                .padding(.vertical, 240)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
+            // Lines fade out at the top and bottom edges instead of being cut off
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.15),
+                                         .init(color: .black, location: 0.85), .init(color: .clear, location: 1)],
+                                 startPoint: .top, endPoint: .bottom))
+            .overlay {
+                if player.lyrics.isEmpty {
+                    ContentUnavailableView("No lyrics", systemImage: "quote.bubble")
+                }
+            }
             .onChange(of: active) { _, i in
-                if let i { withAnimation { proxy.scrollTo(i, anchor: .center) } }
+                if let i { withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(i, anchor: .center) } }
             }
         }
     }
