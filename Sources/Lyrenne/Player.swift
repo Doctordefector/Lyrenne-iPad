@@ -89,6 +89,9 @@ final class Player {
         time = 0; duration = 0; lyrics = []; error = nil; artwork = nil
         loadTask?.cancel()
         loadTask = Task {
+            // Lyrics and artwork don't wait on the audio, and still show if it fails
+            async let lyr = Lyrics.fetch(title: song.title, artist: song.artist)
+            async let art = loadArtwork(song.thumbnail)
             do {
                 let local = Downloads.file(for: song.id)
                 let url = if let local { local } else { try await fetchToCache(song.id) }
@@ -99,12 +102,10 @@ final class Player {
                 updateNowPlaying()
             } catch {
                 guard !Task.isCancelled else { return }
-                self.error = "Could not load audio stream"
-                return
+                self.error = "Could not load audio stream:\n\(error.localizedDescription)"
             }
-            async let lyr = Lyrics.fetch(title: song.title, artist: song.artist)
-            async let art = loadArtwork(song.thumbnail)
             lyrics = await lyr
+            guard !Task.isCancelled else { return }
             if let image = await art {
                 artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                 updateNowPlaying()

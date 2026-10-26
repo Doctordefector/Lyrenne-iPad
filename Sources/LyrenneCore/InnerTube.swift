@@ -100,29 +100,43 @@ public enum InnerTube {
         }
     }
 
-    /// Same order as desktop's getStreamUrl: each client's URL gets a one-byte check (issue #17),
-    /// and if none passes the first is returned anyway so a misfiring check costs nothing.
+    /// Same order as desktop's getStreamUrl: each client's URL gets checked (issue #17), and if
+    /// none passes the first is returned anyway so a misfiring check costs nothing. When every
+    /// client fails, the error says why for each, like desktop's per-client log lines.
     public static func streamURL(for videoId: String) async throws -> URL {
         if visitorData == nil { _ = try? await post("visitor_id", client: webRemix, body: [:]) }
         var unchecked: URL?
+        var reasons: [String] = []
         for client in streamClients {
-            guard let json = try? await post("player", client: client, body: ["videoId": videoId]),
-                  (json["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK",
+            let json: [String: Any]
+            do { json = try await post("player", client: client, body: ["videoId": videoId]) } catch {
+                reasons.append("\(client.name) \(client.version): \(error.localizedDescription)")
+                continue
+            }
+            let playability = json["playabilityStatus"] as? [String: Any]
+            guard playability?["status"] as? String == "OK",
                   let formats = (json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]]
-            else { continue }
+            else {
+                reasons.append("\(client.name) \(client.version): \(playability?["status"] as? String ?? "no answer") \(playability?["reason"] as? String ?? "")")
+                continue
+            }
             // AVPlayer decodes AAC (m4a) but not Opus/WebM
             let best = formats
                 .filter { ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true && $0["url"] != nil }
                 .max { ($0["bitrate"] as? Int ?? 0) < ($1["bitrate"] as? Int ?? 0) }
-            guard let s = best?["url"] as? String, let url = URL(string: s) else { continue }
+            guard let s = best?["url"] as? String, let url = URL(string: s) else {
+                reasons.append("\(client.name) \(client.version): no m4a URL")
+                continue
+            }
             // Probe the last byte: URLs that want a PO token serve only the first MiB, so a
             // first-byte check (desktop's) passes them
             let length = (best?["contentLength"] as? String).flatMap(Int.init) ?? 1
             if await isServed(url, at: length - 1) { return url }
+            reasons.append("\(client.name) \(client.version): stream refused")
             unchecked = unchecked ?? url
         }
         if let unchecked { return unchecked }
-        throw URLError(.resourceUnavailable)
+        throw URLError(.resourceUnavailable, userInfo: [NSLocalizedDescriptionKey: reasons.joined(separator: "\n")])
     }
 
     public static func isServed(_ url: URL, at byte: Int = 0) async -> Bool {
