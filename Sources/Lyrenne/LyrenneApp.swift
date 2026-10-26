@@ -73,7 +73,7 @@ struct TabBar: View {
                 Button { tab = name } label: {
                     VStack(spacing: 4) {
                         Image(systemName: icon).font(.title3).symbolVariant(on ? .fill : .none)
-                        Text(name).font(.caption2.weight(.medium))
+                        Text(name).font(.caption2.weight(.medium)).lineLimit(1).minimumScaleFactor(0.7)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -204,7 +204,7 @@ struct NowPlayingView: View {
 
     var body: some View {
         if let song = player.current {
-            HStack(spacing: 40) {
+            HStack(spacing: 32) {
                 VStack(spacing: 24) {
                     // The full-size cover, with the list's small thumbnail (already loaded) until it
                     // arrives. Keyed by song: reused for the next song, AsyncImage could keep
@@ -239,8 +239,9 @@ struct NowPlayingView: View {
                     }
                     controls
                 }
-                .frame(maxWidth: 420)
-                LyricsView()
+                .frame(minWidth: 300, maxWidth: 420)
+                // Narrower than this, words broke mid-word in portrait
+                LyricsView().frame(minWidth: 340)
             }
             .padding(40)
             .background { Backdrop(url: song.artwork ?? song.thumbnail).id(song.id) }
@@ -346,15 +347,17 @@ struct LyricsView: View {
     @Environment(Player.self) private var player
 
     var body: some View {
+        // Only blank lines (an instrumental's "♪") counts as none
+        let lines = player.lyrics.allSatisfy { $0.text.isEmpty } ? [] : player.lyrics
         // Last line whose time has passed; plain lyrics are all at 0, so none highlights
-        let synced = player.lyrics.contains { $0.time > 0 }
-        let active = synced ? player.lyrics.lastIndex { $0.time <= player.time } : nil
+        let synced = lines.contains { $0.time > 0 }
+        let active = synced ? lines.lastIndex { $0.time <= player.time } : nil
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    ForEach(Array(player.lyrics.enumerated()), id: \.offset) { i, line in
+                    ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
                         Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(synced ? .system(size: 32, weight: .bold) : .title2.weight(.semibold))
+                            .font(synced ? .system(size: 30, weight: .bold) : .title2.weight(.semibold))
                             .foregroundStyle(.white.opacity(i == active || !synced ? 1 : 0.35))
                             .scaleEffect(i == active ? 1.03 : 1, anchor: .leading)
                             .animation(.easeOut(duration: 0.3), value: active)
@@ -371,7 +374,7 @@ struct LyricsView: View {
                                          .init(color: .black, location: 0.85), .init(color: .clear, location: 1)],
                                  startPoint: .top, endPoint: .bottom))
             .overlay {
-                if player.lyrics.isEmpty {
+                if lines.isEmpty {
                     ContentUnavailableView("No lyrics", systemImage: "quote.bubble")
                 }
             }

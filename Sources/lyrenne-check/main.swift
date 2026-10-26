@@ -4,6 +4,7 @@ import FoundationNetworking
 #endif
 @testable import LyrenneCore
 
+setvbuf(stdout, nil, _IOLBF, 0) // CI: lines printed before a crash still reach the log
 // Live end-to-end check of everything the app does over the network. Run: swift run lyrenne-check
 // With LYRENNE_COOKIE set to a signed-in music.youtube.com cookie it also checks the library.
 let parsed = Lyrics.parse("[01:02.50] hello\n[ar: x]\n[00:00.00]")

@@ -99,6 +99,7 @@ struct TogetherView: View {
     @Environment(Player.self) private var player
     @AppStorage("togetherName") private var name = "iPad"
     @State private var code = ""
+    private var canJoin: Bool { !code.trimmingCharacters(in: .whitespaces).isEmpty && !name.isEmpty }
 
     var body: some View {
         List {
@@ -116,8 +117,9 @@ struct TogetherView: View {
                     Button { room.join(code: code, name: name, player: player) } label: {
                         Label("Join room", systemImage: "person.2.fill").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.large).foregroundStyle(Color.onGold)
-                    .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || name.isEmpty)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .foregroundStyle(canJoin ? Color.onGold : .secondary)
+                    .disabled(!canJoin)
                     .listRowBackground(Color.clear)
                     if let m = room.message {
                         Label(m, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
