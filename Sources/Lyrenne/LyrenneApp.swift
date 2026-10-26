@@ -158,12 +158,26 @@ struct SearchView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Show", selection: $filter) {
-                ForEach(InnerTube.SearchFilter.allCases, id: \.self) { Text($0.rawValue) }
+            // Chips, not a segmented picker: five segments cut "Playlists" short in the sidebar
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(InnerTube.SearchFilter.allCases, id: \.self) { f in
+                        let on = filter == f
+                        Button { filter = f } label: {
+                            Text(f.rawValue).font(.footnote.weight(.medium))
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .foregroundStyle(on ? Color.onGold : .primary)
+                                .background(on ? Color.gold : Color.secondary.opacity(0.18), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                .padding(.horizontal)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
+            .scrollIndicators(.hidden)
             .padding(.bottom, 8)
+            .animation(.snappy, value: filter)
             List(Array(results.enumerated()), id: \.offset) { _, item in
                 ItemLink(item, in: results) {
                     if let song = item.song { SongRow(song: song) } else { ItemRow(item: item) }
