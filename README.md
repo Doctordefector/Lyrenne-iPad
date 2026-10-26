@@ -103,16 +103,27 @@ Pull in both before starting, push before switching machines. `.gitattributes` k
 LF everywhere, so a checkout on Windows also builds from WSL. The WSL toolchain disk and `xtool/`
 (build output, CI screenshots) are per machine and not in git.
 
-## Developing on Windows
+## Developing on Windows (WSL)
 
-The Linux side of xtool lives in a WSL distro whose disk is `../toolchain-wsl/ext4.vhdx`.
-See [../README.md](../README.md).
+Optional: CI builds the .ipa. Locally, a WSL distro runs the core check on Linux. Set one up per
+machine (on this PC its disk lives at `XTool/iOS/toolchain-wsl/`):
+
+1. `wsl --install -d Ubuntu-24.04`
+2. In it: [swiftly](https://www.swift.org/install/linux/) for Swift 6.x; for xtool, the AppImage
+   from [xtool releases](https://github.com/xtool-org/xtool/releases) at `/usr/local/bin/xtool`
+   (needs `libfuse2t64`); for an iPad over USB, `usbmuxd libimobiledevice-utils`.
+3. Only to build or install from Windows without CI (`xtool dev`): download Xcode.xip under a free
+   Apple ID from <https://developer.apple.com/download/all/?q=Xcode>, then `xtool setup`, choose
+   Password, and give the .xip's path. For USB, [usbipd-win](https://learn.microsoft.com/en-us/windows/wsl/connect-usb)
+   `bind`/`attach` the iPad; on `AFCClient.Error.muxError` see
+   <https://github.com/xtool-org/xtool/issues/19#issuecomment-2898986718>.
+
+Linux Foundation has no WebSockets, so the Listen Together part of the check only runs on macOS (CI).
+Swift UI code can't be compiled on Linux; `swiftc -parse Sources/Lyrenne/*.swift` catches syntax
+errors, and CI's simulator screenshots show the result.
 
 ```bash
 wsl -d Ubuntu-24.04
 cd "/mnt/s/Dev/XTool/iOS/Lyrenne-iPad"
 swift run lyrenne-check   # live check of the core, on Linux, no SDK needed
 ```
-
-Building the app itself locally (`xtool dev`) needs the iOS SDK, which on Linux comes from
-`xtool setup` with an Xcode.xip downloaded under your Apple ID. CI makes that optional.
