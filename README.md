@@ -9,13 +9,18 @@ Made by Andrei ([Doctordefector](https://github.com/Doctordefector)) with love <
 
 ## What it does
 
-- Search YouTube Music songs, tap one to play it and everything below it
+- Home: YouTube Music's feed (your own when signed in): Quick picks, mixes, new releases
+- Search songs, videos, albums, artists or playlists, with YouTube's suggestions while typing and
+  your recent searches. Tap a song to play it and everything below it
+- Artist pages (top songs, albums, singles, related artists) and album pages; tap the artist
+  under Now Playing, or long-press a song for Go to artist / Go to album
 - Library tab: sign in with Google, then your Liked songs and playlists (Play, Shuffle, Download all)
 - Downloads tab: songs kept for offline listening; downloaded songs always play from disk. They
   are also in the Files app under **On My iPad > Lyrenne** as `Artist - Title [id].m4a` (the id is
   how the app finds them; deleting one there removes the download)
 - Autoplay: the queue tops itself up with YouTube Music's radio for the playing song
 - Queue tab: jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
+- Shuffle what's left of the queue; repeat all or repeat one
 - Synced lyrics from lrclib (tap a line to seek), plain lyrics when that's all there is
 - Keeps playing in the background and with the screen locked; lock screen / Control Center controls with artwork
 - Listen Together (guest): join a room started in desktop or Android Lyrenne with its code; the
@@ -29,8 +34,8 @@ Left out on purpose: Discord, Last.fm, hosting a Listen Together room, equalizer
 
 | Path | What |
 |------|------|
-| `Sources/LyrenneCore/` | Foundation only, no UI, builds on Linux too. `InnerTube.swift` (search, radio, stream URLs), `Account.swift` (signed-in calls, session refresh), `Downloads.swift` (fetching audio, offline files), `Lyrics.swift` (lrclib), `ListenTogether.swift` (guest client, hand-rolled protobuf for desktop's `listentogether.proto`) |
-| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `Library.swift` (sign-in, Keychain, library, playlists), `DownloadsView.swift`, `TogetherView.swift` (Listen Together room), `LyrenneApp.swift` (layout, search, now playing, lyrics) |
+| `Sources/LyrenneCore/` | Foundation only, no UI, builds on Linux too. `InnerTube.swift` (search, radio, stream URLs), `Browse.swift` (home, artist pages, search filters, suggestions), `Account.swift` (signed-in calls, session refresh), `Downloads.swift` (fetching audio, offline files), `Lyrics.swift` (lrclib), `ListenTogether.swift` (guest client, hand-rolled protobuf for desktop's `listentogether.proto`) |
+| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `Library.swift` (sign-in, Keychain, library, playlists), `DownloadsView.swift`, `TogetherView.swift` (Listen Together room), `Browse.swift` (home, shelves, artist page), `LyrenneApp.swift` (layout, search, now playing, lyrics) |
 | `Sources/lyrenne-check/` | Live end-to-end check of the core: search, radio, lyrics, per-client stream report, download, 500-song playlist paging; with `LYRENNE_COOKIE` set, the library too |
 | `Info.plist` | Merged by xtool: iPad-only family, background audio |
 | `Resources/AppIcon.png` | App icon, desktop's lyre (`icon-small.svg`) full-bleed at 1024 px |

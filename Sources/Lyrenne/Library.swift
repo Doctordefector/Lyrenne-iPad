@@ -275,6 +275,9 @@ struct PlaylistView: View {
 
     /// The whole playlist once loaded (kept in the library, so edits show here), else the pages so far
     private var songs: [Song] { library.songs[playlist.id] ?? partial }
+    /// In the library: removing songs and deleting it are offered. Albums and playlists opened
+    /// from Home or search aren't.
+    private var inLibrary: Bool { library.playlists.contains { $0.id == playlist.id } }
 
     var body: some View {
         List {
@@ -284,9 +287,11 @@ struct PlaylistView: View {
                     .buttonStyle(.plain)
                     .songActions(song)
                     .swipeActions {
-                        Button(playlist.id == Playlist.likedSongs.id ? "Remove like" : "Remove", systemImage: "minus.circle", role: .destructive) {
-                            partial.removeAll { $0.id == song.id && $0.setVideoId == song.setVideoId }
-                            Task { await library.remove(song, from: playlist) }
+                        if inLibrary {
+                            Button(playlist.id == Playlist.likedSongs.id ? "Remove like" : "Remove", systemImage: "minus.circle", role: .destructive) {
+                                partial.removeAll { $0.id == song.id && $0.setVideoId == song.setVideoId }
+                                Task { await library.remove(song, from: playlist) }
+                            }
                         }
                     }
             }
@@ -297,7 +302,7 @@ struct PlaylistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             Button("Download all", systemImage: "arrow.down.circle") { downloads.download(songs) }.disabled(songs.isEmpty)
-            if playlist.id != Playlist.likedSongs.id {
+            if inLibrary && playlist.id != Playlist.likedSongs.id {
                 Button("Delete playlist", systemImage: "trash") { confirmDelete = true }
             }
         }

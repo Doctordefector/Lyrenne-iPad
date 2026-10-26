@@ -108,9 +108,17 @@ extension InnerTube {
             let task = Task {
                 do {
                     var json = try await post("browse", client: webRemix, body: ["browseId": browseId], auth: true)
+                    // Album tracks come without a cover, and some without an artist: the album's header has both
+                    let header = find("musicResponsiveHeaderRenderer", in: json).first
+                    let cover = thumbnail(header?["thumbnail"]), artist = text(header?["straplineTextOne"]) ?? ""
                     // ponytail: 50 pages (~5000 songs) cap so a broken continuation can't loop forever
                     for _ in 0..<50 {
-                        out.yield(find("musicResponsiveListItemRenderer", in: json).compactMap(song(fromListItem:)))
+                        out.yield(find("musicResponsiveListItemRenderer", in: json).compactMap(song(fromListItem:)).map {
+                            var s = $0
+                            if s.thumbnail == nil { s.thumbnail = cover }
+                            if s.artist.isEmpty { s.artist = artist }
+                            return s
+                        })
                         guard let token = continuationToken(in: json), !Task.isCancelled else { break }
                         json = try await post("browse", client: webRemix, body: ["continuation": token], auth: true)
                     }

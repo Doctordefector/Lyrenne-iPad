@@ -94,6 +94,7 @@ private struct SongActions: ViewModifier {
     @Environment(DownloadStore.self) private var downloads
     @Environment(Session.self) private var session
     @Environment(LibraryStore.self) private var library
+    @Environment(Nav.self) private var nav
     @State private var naming = false
     @State private var newName = ""
 
@@ -101,6 +102,8 @@ private struct SongActions: ViewModifier {
         content.contextMenu {
             Button("Play next", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext(song) }
             Button("Add to queue", systemImage: "text.badge.plus") { player.enqueue(song) }
+            if let artist = song.artistPage { Button("Go to artist", systemImage: "music.mic") { nav.open(artist) } }
+            if let album = song.albumPage { Button("Go to album", systemImage: "square.stack") { nav.open(album) } }
             if session.signedIn {
                 let liked = library.liked.contains(song.id)
                 Button(liked ? "Remove like" : "Like", systemImage: liked ? "heart.slash" : "heart") { Task { await library.toggleLike(song) } }

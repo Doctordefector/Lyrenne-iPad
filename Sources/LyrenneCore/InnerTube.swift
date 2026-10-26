@@ -6,11 +6,14 @@ import FoundationNetworking
 public struct Song: Identifiable, Hashable, Codable, Sendable {
     public let id: String // YouTube videoId
     public let title: String
-    public let artist: String
-    public let thumbnail: URL?
+    public var artist: String
+    public var thumbnail: URL?
     public let duration: String?
     /// The song's entry in the playlist it was listed from, which removing it needs. Nil elsewhere.
     public var setVideoId: String?
+    /// The song's artist and album pages, when the listing links them
+    public var artistId: String?
+    public var albumId: String?
 
     public init(id: String, title: String, artist: String, thumbnail: URL?, duration: String?) {
         self.id = id; self.title = title; self.artist = artist; self.thumbnail = thumbnail; self.duration = duration
@@ -19,13 +22,16 @@ public struct Song: Identifiable, Hashable, Codable, Sendable {
     /// The listed length ("3:45") in seconds
     public var seconds: TimeInterval? { duration.flatMap(LyrenneCore.seconds) }
 
-    /// The cover at full size. Album art URLs carry their size (`=w60-h60-…`), so ask for a big
-    /// one, as desktop's song details do; video frames (ytimg.com) stay as they are.
-    public var artwork: URL? {
-        guard let s = thumbnail?.absoluteString,
-              let r = s.range(of: #"=w\d+-h\d+"#, options: .regularExpression) else { return thumbnail }
-        return URL(string: s.replacingCharacters(in: r, with: "=w1200-h1200"))
-    }
+    /// The cover at full size, as desktop's song details do
+    public var artwork: URL? { sized(thumbnail, 1200) }
+}
+
+/// Album art URLs carry their size (`=w60-h60-…`), so ask for [px]; video frames (ytimg.com)
+/// stay as they are.
+public func sized(_ url: URL?, _ px: Int) -> URL? {
+    guard let s = url?.absoluteString,
+          let r = s.range(of: #"=w\d+-h\d+"#, options: .regularExpression) else { return url }
+    return URL(string: s.replacingCharacters(in: r, with: "=w\(px)-h\(px)"))
 }
 
 /// A port of the desktop's InnerTube use: search, radio, and stream resolution.
@@ -99,8 +105,7 @@ public enum InnerTube {
     nonisolated(unsafe) public static var visitorData: String?
 
     public static func search(_ query: String) async throws -> [Song] {
-        let json = try await post("search", client: webRemix, body: ["query": query, "params": filterSongs])
-        return find("musicResponsiveListItemRenderer", in: json).compactMap(song(fromListItem:))
+        try await search(query, .songs).compactMap(\.song)
     }
 
     /// The radio YouTube Music would play after [videoId], the source of autoplay.
@@ -108,8 +113,10 @@ public enum InnerTube {
         let json = try await post("next", client: webRemix, body: ["videoId": videoId, "playlistId": "RDAMVM\(videoId)"])
         return find("playlistPanelVideoRenderer", in: json).compactMap { r in
             guard let id = r["videoId"] as? String else { return nil }
-            return Song(id: id, title: text(r["title"]) ?? "", artist: text(r["shortBylineText"]) ?? "",
-                        thumbnail: thumbnail(r["thumbnail"]), duration: text(r["lengthText"]))
+            var song = Song(id: id, title: text(r["title"]) ?? "", artist: text(r["shortBylineText"]) ?? "",
+                            thumbnail: thumbnail(r["thumbnail"]), duration: text(r["lengthText"]))
+            song.link(browseIds(r["longBylineText"]))
+            return song
         }
     }
 
@@ -223,14 +230,42 @@ public enum InnerTube {
     static func song(fromListItem r: [String: Any]) -> Song? {
         let item = r["playlistItemData"] as? [String: Any]
         guard let id = item?["videoId"] as? String else { return nil }
-        let cols = (r["flexColumns"] as? [[String: Any]])?.map { $0["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any] ?? [:] } ?? []
-        let title = cols.first.flatMap { text($0["text"]) } ?? ""
+        let cols = columns(r)
+        let title = cols.first.flatMap { text($0) } ?? ""
         // Search: second column reads "Artist • Album • 3:45". Playlists: just the artist, duration in a fixed column
-        let parts = cols.count > 1 ? (text(cols[1]["text"]) ?? "").components(separatedBy: " • ") : []
+        let parts = cols.count > 1 ? byline(text(cols[1]) ?? "") : []
         let fixed = (r["fixedColumns"] as? [[String: Any]])?.first?["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
         let duration = text(fixed?["text"]) ?? parts.last.flatMap { $0.contains(":") ? $0 : nil }
         var song = Song(id: id, title: title, artist: parts.first ?? "", thumbnail: thumbnail(r["thumbnail"]), duration: duration)
         song.setVideoId = item?["playlistSetVideoId"] as? String
+        song.link(cols.flatMap(browseIds))
         return song
+    }
+
+    /// A list row's columns, the text node of each
+    static func columns(_ r: [String: Any]) -> [[String: Any]] {
+        (r["flexColumns"] as? [[String: Any]])?.map {
+            ($0["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any])?["text"] as? [String: Any] ?? [:]
+        } ?? []
+    }
+
+    /// "Song • Artist • Album" to its parts, without the type label unfiltered results start with
+    static func byline(_ s: String) -> [String] {
+        let parts = s.components(separatedBy: " • ")
+        return ["Song", "Video", "Episode"].contains(parts.first ?? "") ? Array(parts.dropFirst()) : parts
+    }
+
+    /// The pages a text's runs link to (artists, albums)
+    static func browseIds(_ node: Any?) -> [String] {
+        ((node as? [String: Any])?["runs"] as? [[String: Any]] ?? []).compactMap {
+            (($0["navigationEndpoint"] as? [String: Any])?["browseEndpoint"] as? [String: Any])?["browseId"] as? String
+        }
+    }
+}
+
+extension Song {
+    mutating func link(_ browseIds: [String]) {
+        artistId = browseIds.first { $0.hasPrefix("UC") }
+        albumId = browseIds.first { $0.hasPrefix("MPREb") }
     }
 }

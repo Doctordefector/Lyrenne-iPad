@@ -4,7 +4,9 @@ import FoundationNetworking
 #endif
 @testable import LyrenneCore
 
+#if canImport(Darwin) // glibc's stdout is a mutable global, which Swift 6 refuses
 setvbuf(stdout, nil, _IOLBF, 0) // CI: lines printed before a crash still reach the log
+#endif
 // Live end-to-end check of everything the app does over the network. Run: swift run lyrenne-check
 // With LYRENNE_COOKIE set to a signed-in music.youtube.com cookie it also checks the library.
 let parsed = Lyrics.parse("[01:02.50] hello\n[ar: x]\n[00:00.00]")
@@ -56,6 +58,38 @@ print("artwork: \(small.0.count / 1024) KB thumbnail -> \(big.0.count / 1024) KB
 let radio = try await InnerTube.radio(after: first.id)
 precondition(!radio.isEmpty, "radio empty")
 print("radio: \(radio.count) songs, next: \(radio.dropFirst().first?.title ?? "-")")
+precondition(first.artistId?.hasPrefix("UC") == true && first.albumId?.hasPrefix("MPREb") == true, "search song not linked to artist/album")
+precondition(radio.contains { $0.artistId != nil }, "radio songs not linked to artists")
+
+// Browsing: Home, the song's artist and album, each search filter, suggestions
+var home = try await InnerTube.home()
+var shelves = home.shelves
+if let next = home.next { home = try await InnerTube.home(continuation: next); shelves += home.shelves }
+precondition(shelves.count > 3 && shelves.allSatisfy { !$0.title.isEmpty && !$0.items.isEmpty }, "home: \(shelves.map(\.title))")
+print("home: \(shelves.count) shelves over 2 pages: \(shelves.prefix(5).map { "\($0.title) (\($0.items.count))" })")
+let artist = try await InnerTube.artist(first.artistId!)
+let artistSongs = artist.shelves.first?.items.compactMap(\.song) ?? []
+precondition(artist.title == "Daft Punk" && artist.thumbnail != nil && !artistSongs.isEmpty && artist.shelves.first?.more != nil, "artist header/top songs")
+precondition(artist.shelves.contains { $0.items.contains { if case .album = $0 { true } else { false } } }, "artist has no albums")
+print("artist: \(artist.title!), \(artist.shelves.map(\.title))")
+var albumTracks: [Song] = []
+for try await page in InnerTube.playlistPages(first.albumId!) { albumTracks += page }
+precondition(albumTracks.count > 5 && albumTracks.allSatisfy { $0.thumbnail != nil && !$0.artist.isEmpty && $0.duration != nil }, "album tracks: \(albumTracks.prefix(2))")
+print("album: \(albumTracks.count) tracks, first: \(albumTracks[0].title) — \(albumTracks[0].artist) [\(albumTracks[0].duration!)]")
+for filter in InnerTube.SearchFilter.allCases {
+    let items = try await InnerTube.search("daft punk", filter)
+    let right = items.filter {
+        switch (filter, $0) {
+        case (.songs, .song), (.videos, .song), (.albums, .album), (.artists, .artist), (.playlists, .playlist): true
+        default: false
+        }
+    }
+    precondition(right.count > 3 && right.count == items.count, "search \(filter): \(items.count) items, \(right.count) of that kind")
+    print("search \(filter.rawValue): \(items.count), first: \(items[0].title) — \(items[0].subtitle)")
+}
+let suggested = try await InnerTube.suggestions("daft p")
+precondition(suggested.contains { $0.hasPrefix("daft punk") }, "suggestions: \(suggested)")
+print("suggestions: \(suggested)")
 
 // Each provider on its own, then the chain. BetterLyrics only answers songs it has cached, so a
 // miss there is printed, not fatal

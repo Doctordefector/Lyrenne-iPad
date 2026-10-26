@@ -16,6 +16,8 @@ final class Player {
     var lyrics: [LyricLine] = []
     var error: String?
     var autoplay = true
+    var repeatMode = Repeat.off
+    enum Repeat { case off, all, one }
     /// Called once a started song has loaded, or failed to (Listen Together reports it ready)
     @ObservationIgnored var onLoaded: (@MainActor (String) -> Void)?
 
@@ -39,6 +41,9 @@ final class Player {
                     self.duration = d
                     self.updateNowPlaying() // the lock screen's bar needs the length
                 }
+                // That doubled length also means AVPlayer never reaches its own end: it sits in
+                // silence past the real one, so didPlayToEnd never fires. End on the listed length.
+                if let listed = self.current?.seconds, self.time >= listed - 0.5 { self.ended() }
             }
         }
         // Play/pause state straight from AVPlayer. The periodic observer stops firing while
@@ -53,7 +58,7 @@ final class Player {
             }
         }
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.next() }
+            MainActor.assumeIsolated { self?.ended() }
         }
         let cc = MPRemoteCommandCenter.shared()
         cc.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.av.play() }; return .success }
@@ -73,6 +78,12 @@ final class Player {
         start(i)
     }
 
+    /// [song] and the songs listed after it among [items]
+    func play(_ song: Song, in items: [Item]) {
+        let songs = items.compactMap(\.song)
+        play(songs, at: songs.firstIndex(of: song) ?? 0)
+    }
+
     func enqueue(_ song: Song) {
         queue.append(song)
         if queue.count == 1 { start(0) }
@@ -81,6 +92,13 @@ final class Player {
     func playNext(_ song: Song) {
         if queue.isEmpty { return enqueue(song) }
         queue.insert(song, at: index + 1)
+    }
+
+    /// Shuffle what's still to come; the playing song and those already played stay put
+    func shuffleUpcoming() {
+        guard index + 1 < queue.count else { return }
+        queue[(index + 1)...].shuffle()
+        prefetchNext()
     }
 
     func toggle() {
@@ -94,7 +112,15 @@ final class Player {
     }
 
     func next() {
-        if index + 1 < queue.count { start(index + 1) } else { av.pause() }
+        if index + 1 < queue.count { start(index + 1) }
+        else if repeatMode == .all, !queue.isEmpty { start(0) }
+        else { av.pause() }
+    }
+
+    /// The song played to its end: again under repeat one, else the next. Next and the lock
+    /// screen still skip a repeated song.
+    private func ended() {
+        if repeatMode == .one { seek(0); av.play() } else { next() }
     }
 
     func previous() {
@@ -146,7 +172,8 @@ final class Player {
                 updateNowPlaying()
             }
             // Autoplay: near the end of the queue, top it up with the song's radio
-            if autoplay, index >= queue.count - 2, let radio = try? await InnerTube.radio(after: song.id) {
+            // Not under repeat all, which would never get back round to the start
+            if autoplay, repeatMode != .all, index >= queue.count - 2, let radio = try? await InnerTube.radio(after: song.id) {
                 let known = Set(queue.map(\.id))
                 queue += radio.filter { !known.contains($0.id) }
             }

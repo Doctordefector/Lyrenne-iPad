@@ -14,6 +14,8 @@ struct LyrenneApp: App {
     @State private var downloads = DownloadStore()
     @State private var room = Room()
     @State private var library = LibraryStore()
+    @State private var home = HomeFeed()
+    @State private var nav = Nav()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -21,6 +23,7 @@ struct LyrenneApp: App {
             ContentView()
                 // Loaded on sign-in, not when the Library tab opens: likes show on every song row
                 .task(id: session.signedIn) { if session.signedIn { await library.load() } else { library.clear() } }
+                .task(id: session.signedIn) { await home.load() } // the account's own feed, or the anonymous one
                 .alert("Not saved", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 } message: { Text(library.error ?? "") }
                 .environment(player)
@@ -28,6 +31,8 @@ struct LyrenneApp: App {
                 .environment(downloads)
                 .environment(room)
                 .environment(library)
+                .environment(home)
+                .environment(nav)
                 .preferredColorScheme(.dark)
                 .tint(.gold)
         }
@@ -36,15 +41,18 @@ struct LyrenneApp: App {
 }
 
 struct ContentView: View {
-    // LYRENNE_TAB picks the starting tab (CI screenshots); otherwise Search
-    @State private var tab = ProcessInfo.processInfo.environment["LYRENNE_TAB"] ?? "Search"
+    // LYRENNE_TAB picks the starting tab (CI screenshots); otherwise Home, or Search for LYRENNE_DEMO
+    @State private var tab = ProcessInfo.processInfo.environment["LYRENNE_TAB"]
+        ?? (ProcessInfo.processInfo.environment["LYRENNE_DEMO"] == nil ? "Home" : "Search")
+    @Environment(Nav.self) private var nav
     // Both columns side by side even in portrait; the sidebar button still hides it
     @State private var columns = NavigationSplitViewVisibility.all
 
     var body: some View {
+        @Bindable var nav = nav
         NavigationSplitView(columnVisibility: $columns) {
             // Its own stack, so opening a playlist pushes in the sidebar and Now Playing stays put
-            NavigationStack {
+            NavigationStack(path: $nav.path) {
                 VStack(spacing: 0) {
                     TabBar(tab: $tab)
                     switch tab {
@@ -52,13 +60,15 @@ struct ContentView: View {
                     case "Downloads": DownloadsView()
                     case "Queue": QueueView()
                     case "Together": TogetherView()
-                    default: SearchView()
+                    case "Search": SearchView()
+                    default: HomeView()
                     }
                     Link("Made by Andrei with love <3", destination: URL(string: "https://github.com/Doctordefector")!)
                         .font(.caption2).foregroundStyle(.secondary).padding(.vertical, 6)
                 }
                 .navigationTitle("Lyrenne")
                 .navigationDestination(for: Playlist.self) { PlaylistView(playlist: $0) }
+                .navigationDestination(for: Item.self) { ItemPage(item: $0) }
             }
             .navigationSplitViewColumnWidth(min: 340, ideal: 400)
         } detail: {
@@ -71,7 +81,7 @@ struct ContentView: View {
 /// Icon over label, like desktop's rail. A segmented picker cut "Downloads" short.
 struct TabBar: View {
     @Binding var tab: String
-    private let tabs = [("Search", "magnifyingglass"), ("Library", "music.note.house"),
+    private let tabs = [("Home", "house"), ("Search", "magnifyingglass"), ("Library", "music.note.house"),
                         ("Downloads", "arrow.down.circle"), ("Queue", "list.bullet"), ("Together", "person.2")]
 
     var body: some View {
@@ -137,43 +147,82 @@ struct SongRow: View {
 struct SearchView: View {
     @Environment(Player.self) private var player
     @State private var query = ""
-    @State private var results: [Song] = []
+    @State private var filter = InnerTube.SearchFilter.songs
+    @State private var results: [Item] = []
     @State private var searched = "" // the query the results are for
     @State private var loading = false
+    @State private var suggestions: [String] = []
+    // ponytail: newest 20, newline-joined in UserDefaults
+    @AppStorage("searchHistory") private var historyText = ""
+    private var history: [String] { historyText.split(separator: "\n").map(String.init) }
 
     var body: some View {
-        List(Array(results.enumerated()), id: \.element.id) { i, song in
-            Button { player.play(Array(results[i...]), at: 0) } label: { SongRow(song: song) }
-                .buttonStyle(.plain)
-                .songActions(song)
-        }
-        .listStyle(.plain)
-        .overlay {
-            if loading {
-                ProgressView()
-            } else if results.isEmpty && searched.isEmpty {
-                ContentUnavailableView("Search YouTube Music", systemImage: "magnifyingglass",
-                                       description: Text("Tap a song to play it, and everything below it after."))
-            } else if results.isEmpty {
-                ContentUnavailableView.search(text: searched)
+        VStack(spacing: 0) {
+            Picker("Show", selection: $filter) {
+                ForEach(InnerTube.SearchFilter.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            List(Array(results.enumerated()), id: \.offset) { _, item in
+                ItemLink(item, in: results) {
+                    if let song = item.song { SongRow(song: song) } else { ItemRow(item: item) }
+                }
+            }
+            .listStyle(.plain)
+            .overlay {
+                if loading {
+                    ProgressView()
+                } else if results.isEmpty && searched.isEmpty {
+                    ContentUnavailableView("Search YouTube Music", systemImage: "magnifyingglass",
+                                           description: Text("Tap a song to play it, and everything below it after."))
+                } else if results.isEmpty {
+                    ContentUnavailableView.search(text: searched)
+                }
             }
         }
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Songs, artists")
-        .onSubmit(of: .search) { Task { await search() } }
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Songs, albums, artists")
+        .searchSuggestions {
+            // Empty field: recent searches. Typing: YouTube's completions, gone once that text is searched
+            if query.isEmpty {
+                ForEach(history, id: \.self) { suggestion($0, icon: "clock.arrow.circlepath") }
+                if !history.isEmpty {
+                    Button("Clear recent searches", systemImage: "trash", role: .destructive) { historyText = "" }
+                }
+            } else if query != searched {
+                ForEach(suggestions, id: \.self) { suggestion($0, icon: "magnifyingglass") }
+            }
+        }
+        .onSubmit(of: .search) { Task { await search(query) } }
+        .task(id: query) {
+            suggestions = []
+            guard !query.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(250)) // ask once typing pauses
+            guard !Task.isCancelled, let found = try? await InnerTube.suggestions(query) else { return }
+            suggestions = found
+        }
+        .onChange(of: filter) { if !searched.isEmpty { Task { await search(searched) } } }
         .task {
             // LYRENNE_DEMO="query": search and play the first result (CI screenshots)
             guard results.isEmpty, let demo = ProcessInfo.processInfo.environment["LYRENNE_DEMO"], demo != "downloads" else { return }
             query = demo
-            await search()
-            if !results.isEmpty { player.play(results, at: 0) }
+            await search(demo)
+            player.play(results.compactMap(\.song), at: 0)
         }
     }
 
-    private func search() async {
+    private func suggestion(_ text: String, icon: String) -> some View {
+        Button { query = text; Task { await search(text) } } label: { Label(text, systemImage: icon) }
+            .foregroundStyle(.primary)
+    }
+
+    private func search(_ q: String) async {
+        guard !q.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         loading = true
-        results = (try? await InnerTube.search(query)) ?? []
-        searched = query
+        results = (try? await InnerTube.search(q, filter)) ?? []
+        searched = q
         loading = false
+        historyText = ([q] + history.filter { $0 != q }).prefix(20).joined(separator: "\n")
     }
 }
 
@@ -210,6 +259,7 @@ struct NowPlayingView: View {
     @Environment(Room.self) private var room
     @Environment(Session.self) private var session
     @Environment(LibraryStore.self) private var library
+    @Environment(Nav.self) private var nav
     @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
     // Lyrics beside the player when there's room (landscape), under it otherwise (portrait split view)
     @State private var wide = true
@@ -242,7 +292,12 @@ struct NowPlayingView: View {
                                 .padding(.bottom, 6)
                         }
                         Text(song.title).font(.title2.bold()).lineLimit(2)
-                        Text(song.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                        // Opens the artist in the sidebar when the listing linked one
+                        Button { if let artist = song.artistPage { nav.open(artist) } } label: {
+                            Text(song.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(song.artistPage == nil)
                         if session.signedIn {
                             let liked = library.liked.contains(song.id)
                             Button { Task { await library.toggleLike(song) } } label: {
@@ -294,7 +349,9 @@ struct NowPlayingView: View {
     }
 
     private var controls: some View {
-        HStack(spacing: 56) {
+        HStack(spacing: 40) {
+            Button { player.shuffleUpcoming() } label: { Image(systemName: "shuffle").font(.title3) }
+                .accessibilityLabel("Shuffle upcoming")
             Button { player.previous() } label: { Image(systemName: "backward.fill") }
                 .accessibilityLabel("Previous")
             Button { player.toggle() } label: {
@@ -312,6 +369,13 @@ struct NowPlayingView: View {
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             Button { player.next() } label: { Image(systemName: "forward.fill") }
                 .accessibilityLabel("Next")
+            Button {
+                player.repeatMode = switch player.repeatMode { case .off: .all; case .all: .one; case .one: .off }
+            } label: {
+                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat").font(.title3)
+                    .foregroundStyle(player.repeatMode == .off ? Color.white : Color.gold)
+            }
+            .accessibilityLabel(player.repeatMode == .off ? "Repeat off" : player.repeatMode == .all ? "Repeat all" : "Repeat one")
         }
         .font(.title)
         .foregroundStyle(.white)
