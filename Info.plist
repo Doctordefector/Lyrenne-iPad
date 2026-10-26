@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- iPad only -->
+    <key>UIDeviceFamily</key>
+    <array><integer>2</integer></array>
+    <!-- Keeps playing with the screen locked or another app open -->
+    <key>UIBackgroundModes</key>
+    <array><string>audio</string></array>
+    <key>CFBundleDisplayName</key>
+    <string>Lyrenne</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+</dict>
+</plist>

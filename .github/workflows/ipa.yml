@@ -1,0 +1,21 @@
+# Builds an unsigned Lyrenne.ipa on a GitHub macOS runner, which already has Xcode,
+# so nobody needs a Mac or Xcode.xip. Sideloadly/AltStore sign it when installing.
+name: Build IPA
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xtool
+        run: brew install xtool-org/tap/xtool
+      - name: Build
+        run: xtool dev build --configuration release --ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lyrenne-iPad
+          path: xtool/Lyrenne.ipa
