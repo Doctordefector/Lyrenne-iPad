@@ -8,36 +8,59 @@ Ported from Lyrenne `81ac0ac` (2026-10-25).
 ## What it does
 
 - Search YouTube Music songs, tap one to play it and everything below it
+- Library tab: sign in with Google, then your Liked songs and playlists (Play, Shuffle, Download all)
+- Downloads tab: songs kept for offline listening; downloaded songs always play from disk
 - Autoplay: the queue tops itself up with YouTube Music's radio for the playing song
-- Queue tab: jump to, swipe to remove; long-press a search result to add it to the queue
+- Queue tab: jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
 - Synced lyrics from lrclib (tap a line to seek), plain lyrics when that's all there is
 - Keeps playing in the background and with the screen locked; lock screen / Control Center controls with artwork
-- iPad only, split view: search and queue on the left, now playing and lyrics on the right
+- iPad only, split view: browsing on the left, now playing and lyrics on the right
 
-Not ported (desktop features that need more than this): sign-in and library, downloads/offline,
-playlists, Discord, Last.fm, Listen Together, equalizer, crossfade. Add one when you miss it.
+Left out on purpose: Discord, Last.fm, Listen Together, equalizer, crossfade.
 
 ## Layout
 
 | Path | What |
 |------|------|
-| `Sources/LyrenneCore/` | Foundation only, no UI. InnerTube (search, radio, stream URL with desktop's per-client check and fallback) and lrclib lyrics. Builds on Linux too |
-| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `LyrenneApp.swift` (views) |
-| `Sources/lyrenne-check/` | Live end-to-end check of LyrenneCore: search, stream, radio, lyrics |
+| `Sources/LyrenneCore/` | Foundation only, no UI, builds on Linux too. `InnerTube.swift` (search, radio, stream URLs), `Account.swift` (signed-in calls, session refresh), `Downloads.swift` (fetching audio, offline files), `Lyrics.swift` (lrclib) |
+| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `Library.swift` (sign-in, Keychain, library, playlists), `DownloadsView.swift`, `LyrenneApp.swift` (layout, search, now playing, lyrics) |
+| `Sources/lyrenne-check/` | Live end-to-end check of the core: search, radio, lyrics, per-client stream report, download, 500-song playlist paging; with `LYRENNE_COOKIE` set, the library too |
 | `Info.plist` | Merged by xtool: iPad-only family, background audio |
-| `.github/workflows/ipa.yml` | Builds the unsigned `.ipa` on a GitHub macOS runner |
+| `.github/workflows/ipa.yml` | Builds the unsigned `.ipa`, and runs the app on an iPad simulator with screenshots |
 
-## Streams
+## Sign-in
 
-Desktop tries web clients too, but their URLs need YouTube's JS signature deobfuscation (NewPipe),
-which has no iOS port. The iPad build uses only clients that hand out direct URLs (Android VR,
-iOS), takes the best AAC (m4a) format since AVPlayer can't decode Opus, and checks each URL with a
-one-byte request before using it, same as desktop's fix for issue #17. If playback breaks one day,
-compare `streamClients` in `InnerTube.swift` with desktop's `YouTubeClient.kt` and copy the newer versions.
+Google's sign-in page in a web view, the same flow as upstream Android. The resulting cookie is
+kept in the Keychain. Google rotates session cookies and a stored copy dies within weeks unless the
+rotated ones are folded back, so every launch loads music.youtube.com with it, reads `LOGGED_IN`, and
+merges the new cookies (desktop's `AuthManager.refreshSession`). An expired session says so and asks
+you to sign in again; being offline keeps the login.
+
+## Streams (October 2026)
+
+- Most clients now hand out URLs that serve only the first MiB without a PO token (which needs
+  BotGuard, not available here). Desktop's **VISIONOS** client still gets whole-file URLs, so it is
+  tried first, with `visitorData` sent like desktop. The check before using a URL probes the file's
+  **last** byte; desktop's first-byte check passes the truncated URLs.
+- googlevideo also refuses (403) a plain GET, open-ended Ranges and any Range over 1 MiB. AVPlayer
+  streams with open-ended Ranges, so the app fetches each song in 1 MiB ranges, in parallel (~0.3 s
+  for a 6 MB song), and plays the file. Downloads use the same fetch.
+- Web clients need YouTube's JS signature deobfuscation (NewPipe), which has no iOS port.
+
+When playback breaks: run `swift run lyrenne-check` and read its `client ...` lines, then compare
+`streamClients` in `InnerTube.swift` with desktop's `YouTubeClient.kt` / `ContentAwareFallbackStrategy.kt`.
+The app's error under the player also lists each client's reason.
+
+## CI and the simulator
+
+YouTube answers every client from GitHub's runners with "Sign in to confirm you're not a bot"
+(datacenter IPs), so on CI streams fail by design, while the same code plays from a home connection.
+The simulator job therefore proves playback offline: it places a spoken test tone in the app's
+Downloads and plays it. Screenshots are uploaded as the `simulator-screenshots` artifact.
 
 ## Getting the .ipa (no Mac needed)
 
-Push this folder to a GitHub repo. The **Build IPA** workflow runs on every push (or by hand from
+The repo is <https://github.com/Doctordefector/Lyrenne-iPad>. The **Build IPA** workflow runs on every push (or by hand from
 the Actions tab) and uploads `Lyrenne-iPad` as an artifact; unzip it to get `Lyrenne.ipa`.
 
 ## Installing on the iPad
