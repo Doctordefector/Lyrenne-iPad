@@ -45,7 +45,7 @@ final class Session {
 }
 
 enum Keychain {
-    private static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "lyrenne.youtube.cookie"]
+    private static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "lyrenne.youtube.cookie"] }
 
     static var cookie: String? {
         get {

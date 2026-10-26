@@ -90,7 +90,8 @@ final class Player {
         loadTask?.cancel()
         loadTask = Task {
             do {
-                let url = try await Downloads.file(for: song.id) ?? fetchToCache(song.id)
+                let local = Downloads.file(for: song.id)
+                let url = if let local { local } else { try await fetchToCache(song.id) }
                 guard !Task.isCancelled else { return }
                 try? AVAudioSession.sharedInstance().setActive(true)
                 av.replaceCurrentItem(with: AVPlayerItem(url: url))
