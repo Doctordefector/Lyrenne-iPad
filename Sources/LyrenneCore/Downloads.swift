@@ -36,7 +36,10 @@ public enum Downloads {
     }
 
     public static func download(_ song: Song) async throws {
-        try await fetchAudio(song.id).write(to: directory.appendingPathComponent(audioName(song)), options: .atomic)
+        let audio = try await fetchAudio(song.id)
+        try audio.write(to: directory.appendingPathComponent(audioName(song)), options: .atomic)
+        var song = song
+        if song.duration == nil { song.duration = length(of: audio).map(clock) }
         try JSONEncoder().encode(song).write(to: info(song.id), options: .atomic)
     }
 
@@ -72,6 +75,32 @@ public enum Downloads {
         let data = rest.keys.sorted().reduce(first) { $0 + rest[$1]! }
         guard data.count == total else { throw URLError(.cannotDecodeContentData) }
         return data
+    }
+
+    /// The real length of a YouTube m4a: the sum of the segment durations in its sidx box, near
+    /// the start. AVPlayer adds the header's length to the fragments', nearly doubling it, so
+    /// songs listed without a length (Home cards, an artist's top songs) take it from here.
+    public static func length(of data: Data) -> TimeInterval? {
+        let b = [UInt8](data.prefix(1 << 18))
+        func int(_ at: Int, _ n: Int) -> Int { b[at..<at + n].reduce(0) { $0 << 8 | Int($1) } }
+        var at = 0
+        while at + 8 <= b.count {
+            let size = int(at, 4)
+            guard size >= 8 else { return nil } // 64-bit sizes: never before sidx in these files
+            if b[at + 4..<at + 8].elementsEqual("sidx".utf8) {
+                // version+flags, reference_ID, timescale, then earliest time and first offset
+                // (4 bytes each in version 0, 8 in 1), reserved, reference count, then 12 bytes per segment
+                guard at + 32 <= b.count else { return nil }
+                let scale = int(at + 16, 4)
+                let refs = at + 20 + (b[at + 8] == 0 ? 8 : 16)
+                let count = int(refs + 2, 2)
+                guard scale > 0, refs + 4 + count * 12 <= b.count else { return nil }
+                let total = (0..<count).reduce(0) { $0 + int(refs + 4 + $1 * 12 + 4, 4) }
+                return TimeInterval(total) / TimeInterval(scale)
+            }
+            at += size
+        }
+        return nil
     }
 
     static func range(_ url: URL, from start: Int, length: Int) async throws -> (Data, total: Int) {

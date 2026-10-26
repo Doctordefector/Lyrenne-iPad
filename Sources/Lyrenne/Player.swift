@@ -153,6 +153,12 @@ final class Player {
                 let local = Downloads.file(for: song.id)
                 let url = if let local { local } else { try await fetchToCache(song.id) }
                 guard !Task.isCancelled else { return }
+                // Listed without a length (Home, an artist's top songs): the file's own, before
+                // AVPlayer's doubled one shows or the song plays on past its end
+                if song.duration == nil, let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                   let real = Downloads.length(of: data) {
+                    for j in queue.indices where queue[j].id == song.id { queue[j].duration = clock(real) }
+                }
                 try? AVAudioSession.sharedInstance().setActive(true)
                 av.replaceCurrentItem(with: AVPlayerItem(url: url))
                 av.play()

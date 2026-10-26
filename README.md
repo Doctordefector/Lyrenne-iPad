@@ -15,11 +15,11 @@ Made by Andrei ([Doctordefector](https://github.com/Doctordefector)) with love <
 - Artist pages (top songs, albums, singles, related artists) and album pages; tap the artist
   under Now Playing, or long-press a song for Go to artist / Go to album
 - Library tab: sign in with Google, then your Liked songs and playlists (Play, Shuffle, Download all)
-- Downloads tab: songs kept for offline listening; downloaded songs always play from disk. They
+- Downloads (top of Library, signed in or not): songs kept for offline listening; downloaded songs always play from disk. They
   are also in the Files app under **On My iPad > Lyrenne** as `Artist - Title [id].m4a` (the id is
   how the app finds them; deleting one there removes the download)
 - Autoplay: the queue tops itself up with YouTube Music's radio for the playing song
-- Queue tab: jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
+- Queue (the list button beside the heart, under the song): jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
 - Shuffle what's left of the queue; repeat all or repeat one
 - Synced lyrics from lrclib (tap a line to seek), plain lyrics when that's all there is
 - Keeps playing in the background and with the screen locked; lock screen / Control Center controls with artwork

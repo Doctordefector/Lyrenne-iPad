@@ -17,6 +17,12 @@ func seconds<S: StringProtocol>(_ clock: S) -> TimeInterval? {
     return parts.reduce(0) { $0 * 60 + $1! }
 }
 
+/// The other way: 225 to "3:45", 3723 to "1:02:03"
+public func clock(_ t: TimeInterval) -> String {
+    let s = Int(t.rounded())
+    return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+}
+
 /// Desktop's provider chain (LyricsManager.kt): BetterLyrics, LrcLib, KuGou, then YouTube Music.
 /// Desktop's last resort, YouTube transcripts, is left out: get_transcript answers 400 to every
 /// client now, desktop's included. Synced lines when a provider has them, plain text otherwise.

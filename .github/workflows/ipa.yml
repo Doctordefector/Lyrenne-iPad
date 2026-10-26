@@ -65,7 +65,7 @@ jobs:
           xcrun simctl io "$ipad" screenshot shots/3-offline-playing.png
           sleep 8
           xcrun simctl io "$ipad" screenshot shots/4-next-song.png
-          for tab in Home Library Queue Together; do
+          for tab in Home Library Together; do
             xcrun simctl terminate "$ipad" com.lyrenne.ipad || true
             SIMCTL_CHILD_LYRENNE_TAB=$tab xcrun simctl launch "$ipad" com.lyrenne.ipad
             sleep 8

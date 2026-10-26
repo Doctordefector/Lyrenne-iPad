@@ -182,53 +182,69 @@ final class LibraryStore {
     }
 }
 
+/// Sidebar pages that aren't a playlist or an item
+enum Screen: Hashable { case downloads }
+
 struct LibraryView: View {
     @Environment(Session.self) private var session
     @Environment(LibraryStore.self) private var library
+    @Environment(DownloadStore.self) private var downloads
+
+    private func row(_ p: Playlist, icon: String) -> some View {
+        HStack(spacing: 12) {
+            AsyncImage(url: p.thumbnail) { $0.resizable().scaledToFill() } placeholder: {
+                Image(systemName: icon)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.2))
+            }
+            .frame(width: 56, height: 56)
+            .foregroundStyle(Color.gold)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(p.title).lineLimit(1)
+                Text(p.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+    }
     @State private var showLogin = false
     @State private var naming = false
     @State private var newName = ""
 
     var body: some View {
         Group {
-            if session.signedIn {
-                List(library.playlists) { p in
-                    NavigationLink(value: p) {
-                        HStack(spacing: 12) {
-                            AsyncImage(url: p.thumbnail) { $0.resizable().scaledToFill() } placeholder: {
-                                Image(systemName: p.id == Playlist.likedSongs.id ? "heart.fill" : "music.note.list")
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.secondary.opacity(0.2))
-                            }
-                            .frame(width: 56, height: 56)
-                            .foregroundStyle(Color.gold)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(p.title).lineLimit(1)
-                                Text(p.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                    }
+            // Downloads first, signed in or not: they're what plays offline
+            List {
+                NavigationLink(value: Screen.downloads) {
+                    row(Playlist(id: "downloads", title: "Downloads", subtitle: "\(downloads.songs.count) songs on this iPad", thumbnail: nil),
+                        icon: "arrow.down.circle.fill")
                 }
-                .listStyle(.plain)
-                .overlay { if library.loading && library.playlists.isEmpty { ProgressView() } }
-                .refreshable { await library.load() }
-                .toolbar {
+                if session.signedIn {
+                    ForEach(library.playlists) { p in
+                        NavigationLink(value: p) { row(p, icon: p.id == Playlist.likedSongs.id ? "heart.fill" : "music.note.list") }
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("Your library", systemImage: "person.crop.circle")
+                    } description: {
+                        Text(session.message ?? "Sign in with your Google account to see your playlists and liked songs.")
+                    } actions: {
+                        Button("Sign in to YouTube Music") { showLogin = true }
+                            .buttonStyle(.borderedProminent).controlSize(.large).foregroundStyle(Color.onGold)
+                    }
+                    .listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            .overlay { if session.signedIn && library.loading && library.playlists.isEmpty { ProgressView() } }
+            .refreshable { if session.signedIn { await library.load() } }
+            .toolbar {
+                if session.signedIn {
                     Button("New playlist", systemImage: "plus") { naming = true }
                     Menu("Account", systemImage: "person.crop.circle") {
                         Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { session.signOut() }
                     }
                 }
-                .newPlaylistAlert(isPresented: $naming, name: $newName) { await library.create($0, with: nil) }
-            } else {
-                ContentUnavailableView {
-                    Label("Your library", systemImage: "person.crop.circle")
-                } description: {
-                    Text(session.message ?? "Sign in with your Google account to see your playlists and liked songs.")
-                } actions: {
-                    Button("Sign in to YouTube Music") { showLogin = true }
-                        .buttonStyle(.borderedProminent).controlSize(.large).foregroundStyle(Color.onGold)
-                }
             }
+            .newPlaylistAlert(isPresented: $naming, name: $newName) { await library.create($0, with: nil) }
         }
         .sheet(isPresented: $showLogin) {
             NavigationStack {

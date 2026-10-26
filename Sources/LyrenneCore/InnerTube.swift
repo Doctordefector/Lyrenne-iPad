@@ -8,7 +8,8 @@ public struct Song: Identifiable, Hashable, Codable, Sendable {
     public let title: String
     public var artist: String
     public var thumbnail: URL?
-    public let duration: String?
+    /// The listed length; filled from the audio file for songs listed without one
+    public var duration: String?
     /// The song's entry in the playlist it was listed from, which removing it needs. Nil elsewhere.
     public var setVideoId: String?
     /// The song's artist and album pages, when the listing links them

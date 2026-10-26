@@ -57,8 +57,7 @@ struct ContentView: View {
                     TabBar(tab: $tab)
                     switch tab {
                     case "Library": LibraryView()
-                    case "Downloads": DownloadsView()
-                    case "Queue": QueueView()
+                    case "Downloads": DownloadsView() // CI's offline check; in the app it's under Library
                     case "Together": TogetherView()
                     case "Search": SearchView()
                     default: HomeView()
@@ -69,6 +68,7 @@ struct ContentView: View {
                 .navigationTitle("Lyrenne")
                 .navigationDestination(for: Playlist.self) { PlaylistView(playlist: $0) }
                 .navigationDestination(for: Item.self) { ItemPage(item: $0) }
+                .navigationDestination(for: Screen.self) { _ in DownloadsView().navigationTitle("Downloads") }
             }
             .navigationSplitViewColumnWidth(min: 340, ideal: 400)
         } detail: {
@@ -81,8 +81,8 @@ struct ContentView: View {
 /// Icon over label, like desktop's rail. A segmented picker cut "Downloads" short.
 struct TabBar: View {
     @Binding var tab: String
-    private let tabs = [("Home", "house"), ("Search", "magnifyingglass"), ("Library", "music.note.house"),
-                        ("Downloads", "arrow.down.circle"), ("Queue", "list.bullet"), ("Together", "person.2")]
+    // Downloads sit inside Library and the queue beside the player, so four fit roomily
+    private let tabs = [("Home", "house"), ("Search", "magnifyingglass"), ("Library", "music.note.house"), ("Together", "person.2")]
 
     var body: some View {
         HStack(spacing: 4) {
@@ -260,6 +260,7 @@ struct NowPlayingView: View {
     @Environment(Session.self) private var session
     @Environment(LibraryStore.self) private var library
     @Environment(Nav.self) private var nav
+    @State private var showQueue = false
     @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
     // Lyrics beside the player when there's room (landscape), under it otherwise (portrait split view)
     @State private var wide = true
@@ -298,17 +299,27 @@ struct NowPlayingView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(song.artistPage == nil)
-                        if session.signedIn {
-                            let liked = library.liked.contains(song.id)
-                            Button { Task { await library.toggleLike(song) } } label: {
-                                Image(systemName: liked ? "heart.fill" : "heart")
-                                    .font(.title2).foregroundStyle(Color.gold)
-                                    .contentTransition(.symbolEffect(.replace))
+                        HStack(spacing: 36) {
+                            if session.signedIn {
+                                let liked = library.liked.contains(song.id)
+                                Button { Task { await library.toggleLike(song) } } label: {
+                                    Image(systemName: liked ? "heart.fill" : "heart")
+                                        .contentTransition(.symbolEffect(.replace))
+                                }
+                                .accessibilityLabel(liked ? "Remove like" : "Like")
                             }
-                            .buttonStyle(.plain)
-                            .padding(.top, 8)
-                            .accessibilityLabel(liked ? "Remove like" : "Like")
+                            // The queue lives with the player, in a popover, not as a sidebar tab
+                            Button { showQueue = true } label: { Image(systemName: "list.bullet") }
+                                .accessibilityLabel("Queue")
+                                .popover(isPresented: $showQueue) {
+                                    NavigationStack { QueueView().navigationTitle("Up next").navigationBarTitleDisplayMode(.inline) }
+                                        .frame(minWidth: 380, idealWidth: 420, minHeight: 560)
+                                        .tint(.gold)
+                                }
                         }
+                        .font(.title2).foregroundStyle(Color.gold)
+                        .buttonStyle(.plain)
+                        .padding(.top, 8)
                     }
                     .multilineTextAlignment(.center)
                     if let e = player.error {

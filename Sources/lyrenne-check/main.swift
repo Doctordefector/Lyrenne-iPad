@@ -120,6 +120,9 @@ let audio = try Downloads.file(for: first.id).map { try Data(contentsOf: $0) } ?
 // An m4a starts with an ftyp box: bytes 4..<8 are "ftyp"
 precondition(audio.count > 500_000 && String(decoding: audio[4..<8], as: UTF8.self) == "ftyp", "download is not an m4a: \(audio.count) bytes")
 print("download: \(audio.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+let fileLength = Downloads.length(of: audio)
+print("length from the file: \(fileLength.map { String(format: "%.2f s", $0) } ?? "none"), listed \(first.duration ?? "?")")
+precondition(abs((fileLength ?? 0) - first.seconds!) < 2 && clock(370) == "6:10" && clock(3723) == "1:02:03", "m4a length")
 precondition(Downloads.all().contains(first), "download not listed")
 let visible = Downloads.file(for: first.id)!.lastPathComponent
 precondition(visible == "Daft Punk, Pharrell Williams & Nile Rodgers - Get Lucky (feat. Pharrell Williams and Nile Rodgers) [\(first.id)].m4a", "file name: \(visible)")
