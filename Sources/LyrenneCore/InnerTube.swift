@@ -139,6 +139,24 @@ public enum InnerTube {
         throw URLError(.resourceUnavailable, userInfo: [NSLocalizedDescriptionKey: reasons.joined(separator: "\n")])
     }
 
+    /// One line per stream client saying whether it still hands out whole-file URLs.
+    /// What to look at when playback breaks (lyrenne-check prints it).
+    public static func clientReport(for videoId: String) async -> [String] {
+        var lines: [String] = []
+        for client in streamClients {
+            let json = (try? await post("player", client: client, body: ["videoId": videoId])) ?? [:]
+            let status = (json["playabilityStatus"] as? [String: Any])?["status"] as? String ?? "no answer"
+            let m4a = ((json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] ?? [])
+                .first { ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true }
+            var whole = "-"
+            if let u = (m4a?["url"] as? String).flatMap(URL.init(string:)), let len = (m4a?["contentLength"] as? String).flatMap(Int.init) {
+                whole = await isServed(u, at: len - 1) ? "whole file served" : "first MiB only (wants a PO token)"
+            }
+            lines.append("client \(client.name) \(client.version): \(status), \(whole)")
+        }
+        return lines
+    }
+
     public static func isServed(_ url: URL, at byte: Int = 0) async -> Bool {
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.setValue("bytes=\(byte)-\(byte)", forHTTPHeaderField: "Range")

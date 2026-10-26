@@ -60,6 +60,12 @@ struct DownloadsView: View {
             .onDelete { set in set.map { downloads.songs[$0].id }.forEach(downloads.delete) }
         }
         .listStyle(.plain)
+        .task {
+            // LYRENNE_DEMO=downloads: play the downloads (CI plays a test tone from here)
+            if ProcessInfo.processInfo.environment["LYRENNE_DEMO"] == "downloads", !downloads.songs.isEmpty {
+                player.play(downloads.songs, at: 0)
+            }
+        }
         .overlay {
             if downloads.songs.isEmpty && downloads.current == nil {
                 ContentUnavailableView("No downloads", systemImage: "arrow.down.circle",

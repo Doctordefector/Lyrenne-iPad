@@ -18,11 +18,6 @@ let songs = try await InnerTube.search("Daft Punk Get Lucky")
 guard let first = songs.first, !first.title.isEmpty else { fatalError("search returned no songs") }
 print("search: \(songs.count) songs, first: \(first.title) — \(first.artist) [\(first.duration ?? "?")]")
 
-let url = try await InnerTube.streamURL(for: first.id)
-let served = await InnerTube.isServed(url)
-precondition(served, "stream URL refused")
-print("stream: OK \(url.host ?? "")")
-
 let radio = try await InnerTube.radio(after: first.id)
 precondition(!radio.isEmpty, "radio empty")
 print("radio: \(radio.count) songs, next: \(radio.dropFirst().first?.title ?? "-")")
@@ -31,17 +26,12 @@ let lyrics = await Lyrics.fetch(title: first.title, artist: first.artist)
 print("lyrics: \(lyrics.count) lines, synced: \(lyrics.contains { $0.time > 0 })")
 
 // Which clients still hand out fully served URLs: what to look at when playback breaks
-for client in InnerTube.streamClients {
-    let json = try await InnerTube.post("player", client: client, body: ["videoId": first.id])
-    let status = (json["playabilityStatus"] as? [String: Any])?["status"] as? String ?? "?"
-    let m4a = ((json["streamingData"] as? [String: Any])?["adaptiveFormats"] as? [[String: Any]] ?? [])
-        .first { ($0["mimeType"] as? String)?.hasPrefix("audio/mp4") == true }
-    var whole = "-"
-    if let u = (m4a?["url"] as? String).flatMap(URL.init(string:)), let len = (m4a?["contentLength"] as? String).flatMap(Int.init) {
-        whole = await InnerTube.isServed(u, at: len - 1) ? "whole file served" : "first MiB only (wants a PO token)"
-    }
-    print("client \(client.name) \(client.version): \(status), \(whole)")
-}
+for line in await InnerTube.clientReport(for: first.id) { print(line) }
+
+let url = try await InnerTube.streamURL(for: first.id)
+let served = await InnerTube.isServed(url)
+precondition(served, "stream URL refused")
+print("stream: OK \(url.host ?? "")")
 
 let started = Date()
 try await Downloads.download(first)
