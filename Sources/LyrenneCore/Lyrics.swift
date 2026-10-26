@@ -110,6 +110,21 @@ public enum Lyrics {
         }
     }
 
+    /// Lyrics written or edited by hand: LRC when any line carries a time, plain text otherwise
+    public static func edited(_ text: String) -> [LyricLine] {
+        let timed = parse(text)
+        return timed.isEmpty ? plain(text) : timed
+    }
+
+    /// The other way, for the editor: LRC for synced lines, the bare text for plain ones
+    public static func text(_ lines: [LyricLine]) -> String {
+        guard lines.contains(where: { $0.time > 0 }) else { return lines.map(\.text).joined(separator: "\n") }
+        return lines.map { line in
+            let centis = Int((line.time * 100).rounded())
+            return String(format: "[%02d:%02d.%02d]", centis / 6000, centis / 100 % 60, centis % 100) + line.text
+        }.joined(separator: "\n")
+    }
+
     /// Plain lyrics: every line at time 0, so nothing highlights
     static func plain(_ text: String) -> [LyricLine] {
         text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { LyricLine(time: 0, text: String($0)) }

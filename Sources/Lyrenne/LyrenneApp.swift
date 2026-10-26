@@ -458,42 +458,180 @@ struct PlayError: View {
 
 struct LyricsView: View {
     @Environment(Player.self) private var player
+    @AppStorage("lyricsRomanize") private var romanize = true
+    @State private var romanized: [String: String] = [:]
+    @State private var showTiming = false
+    @State private var editing: EditedText?
 
     var body: some View {
         // Only blank lines (an instrumental's "♪") counts as none
         let lines = player.lyrics.allSatisfy { $0.text.isEmpty } ? [] : player.lyrics
-        // Last line whose time has passed; plain lyrics are all at 0, so none highlights
+        // Last line whose time has passed; plain lyrics are all at 0, so none highlights.
+        // A positive offset runs the lyrics ahead of the song by that much.
         let synced = lines.contains { $0.time > 0 }
-        let active = synced ? lines.lastIndex { $0.time <= player.time } : nil
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
-                        Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(synced ? .system(size: 30, weight: .bold) : .title2.weight(.semibold))
+        let now = player.time + player.lyricsOffset
+        let active = synced ? lines.lastIndex { $0.time <= now } : nil
+        let foreign = lines.contains { Romanize.needed($0.text) }
+        let toRomanize = romanize && foreign ? lines.map(\.text) : []
+        VStack(spacing: 0) {
+            if player.current != nil { toolbar(synced: synced, foreign: foreign, hasLyrics: !lines.isEmpty) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(line.text.isEmpty ? "♪" : line.text)
+                                    .font(synced ? .system(size: 30, weight: .bold) : .title2.weight(.semibold))
+                                // The reading under its line, smaller, so the sung script stays the main thing
+                                if romanize, let reading = romanized[line.text] {
+                                    Text(reading).font(.system(size: synced ? 20 : 17, weight: .medium)).italic()
+                                }
+                            }
                             .foregroundStyle(.white.opacity(i == active || !synced ? 1 : 0.35))
                             .scaleEffect(i == active ? 1.03 : 1, anchor: .leading)
                             .animation(.easeOut(duration: 0.3), value: active)
                             .id(i)
-                            .onTapGesture { if synced { player.seek(line.time) } }
+                            .onTapGesture { if synced { player.seek(max(line.time - player.lyricsOffset, 0)) } }
+                        }
+                    }
+                    .padding(.vertical, 240)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollIndicators(.hidden)
+                // Lines fade out at the top and bottom edges instead of being cut off
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.15),
+                                             .init(color: .black, location: 0.85), .init(color: .clear, location: 1)],
+                                     startPoint: .top, endPoint: .bottom))
+                .overlay {
+                    if lines.isEmpty {
+                        ContentUnavailableView("No lyrics", systemImage: "quote.bubble")
                     }
                 }
-                .padding(.vertical, 240)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollIndicators(.hidden)
-            // Lines fade out at the top and bottom edges instead of being cut off
-            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.15),
-                                         .init(color: .black, location: 0.85), .init(color: .clear, location: 1)],
-                                 startPoint: .top, endPoint: .bottom))
-            .overlay {
-                if lines.isEmpty {
-                    ContentUnavailableView("No lyrics", systemImage: "quote.bubble")
+                .onChange(of: active) { _, i in
+                    if let i { withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(i, anchor: .center) } }
                 }
             }
-            .onChange(of: active) { _, i in
-                if let i { withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(i, anchor: .center) } }
+        }
+        // Worked out off the main thread, once per set of lyrics
+        .task(id: toRomanize) {
+            let texts = toRomanize
+            romanized = texts.isEmpty ? [:] : await Task.detached { Romanize.lines(texts) }.value
+        }
+        .sheet(item: $editing) { start in
+            LyricsEditor(text: start.text)
+        }
+    }
+
+    /// Timing, romanization and editing, above the lyrics
+    private func toolbar(synced: Bool, foreign: Bool, hasLyrics: Bool) -> some View {
+        HStack(spacing: 22) {
+            Spacer()
+            if synced {
+                Button { showTiming = true } label: {
+                    // Gold while moved, so a forgotten offset is noticeable
+                    Image(systemName: "timer").foregroundStyle(player.lyricsOffset == 0 ? Color.white : Color.gold)
+                }
+                .accessibilityLabel("Lyrics timing")
+                .popover(isPresented: $showTiming) { LyricsTiming().padding(24).frame(width: 320) }
+            }
+            if foreign {
+                Button { romanize.toggle() } label: {
+                    Image(systemName: "character.textbox").foregroundStyle(romanize ? Color.gold : Color.white)
+                }
+                .accessibilityLabel(romanize ? "Hide romanization" : "Show romanization")
+            }
+            Button { editing = EditedText(text: hasLyrics ? Lyrics.text(player.lyrics) : "") } label: {
+                Image(systemName: "square.and.pencil")
+            }
+            .accessibilityLabel(hasLyrics ? "Edit lyrics" : "Write lyrics")
+        }
+        .font(.title3)
+        .foregroundStyle(.white)
+        .buttonStyle(.plain)
+        .padding(.bottom, 8)
+    }
+}
+
+/// The editor's starting text, as something a sheet can be presented for
+struct EditedText: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+/// Moves the playing song's lyrics earlier or later. Worded that way rather than as a signed
+/// number, since which way "+" goes is a convention nobody can guess. Saved per song.
+struct LyricsTiming: View {
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        let offset = player.lyricsOffset
+        VStack(spacing: 14) {
+            Text("Lyrics timing").font(.headline)
+            Text(offset == 0 ? "On time" : String(format: "%.1f s ", abs(offset)) + (offset > 0 ? "earlier" : "later"))
+                .font(.title2.bold()).monospacedDigit()
+                .foregroundStyle(offset == 0 ? Color.primary : Color.gold)
+            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                GridRow {
+                    Text("Earlier").font(.subheadline).gridColumnAlignment(.leading)
+                    Button("0.1 s") { player.setLyricsOffset(offset + 0.1) }
+                    Button("0.5 s") { player.setLyricsOffset(offset + 0.5) }
+                }
+                GridRow {
+                    Text("Later").font(.subheadline)
+                    Button("0.1 s") { player.setLyricsOffset(offset - 0.1) }
+                    Button("0.5 s") { player.setLyricsOffset(offset - 0.5) }
+                }
+            }
+            .buttonStyle(.bordered)
+            Text("Lyrics behind the singer? Show them earlier.")
+                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Reset") { player.setLyricsOffset(0) }.disabled(offset == 0)
+        }
+        .tint(.gold)
+    }
+}
+
+/// The lyrics as text, editable: LRC ("[01:23.45] A line") or plain. Saved for this song, and
+/// "Use found lyrics" goes back to what the lookup finds.
+struct LyricsEditor: View {
+    @Environment(Player.self) private var player
+    @Environment(\.dismiss) private var dismiss
+    @State var text: String
+
+    var body: some View {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Plain text, or a time on each line, like [01:23.45] A line. Fixing one wrong time is usually enough; the timer button moves them all.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                TextEditor(text: $text)
+                    .font(.body.monospaced())
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.12), in: .rect(cornerRadius: 10))
+                if player.lyricsEdited {
+                    Button("Use found lyrics instead", role: .destructive) {
+                        player.revertLyrics()
+                        dismiss()
+                    }
+                }
+            }
+            .padding()
+            .navigationTitle(player.lyrics.isEmpty ? "Write lyrics" : "Edit lyrics")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        player.saveLyrics(trimmed)
+                        dismiss()
+                    }
+                    .disabled(trimmed.isEmpty)
+                }
             }
         }
+        .tint(.gold)
     }
 }

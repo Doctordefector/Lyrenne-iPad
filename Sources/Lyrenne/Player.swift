@@ -14,6 +14,10 @@ final class Player {
     var time: TimeInterval = 0
     var duration: TimeInterval = 0
     var lyrics: [LyricLine] = []
+    /// Seconds this song's lyrics are moved; positive shows them sooner, as on desktop
+    var lyricsOffset: TimeInterval = 0
+    /// The lyrics on screen are the user's own, not a provider's
+    var lyricsEdited = false
     var error: String?
     var autoplay = true
     var repeatMode = Repeat.off
@@ -143,11 +147,16 @@ final class Player {
         // reporting into the new song's time and lyrics
         av.replaceCurrentItem(with: nil)
         time = 0; duration = 0; lyrics = []; error = nil; artwork = nil
+        lyricsOffset = LyricsTweaks.offset(song.id)
+        // The user's own lyrics show at once and skip the lookup
+        let edited = LyricsTweaks.edited(song.id)
+        lyricsEdited = edited != nil
+        if let edited { lyrics = Lyrics.edited(edited) }
         updateNowPlaying()
         loadTask?.cancel()
         loadTask = Task {
             // Lyrics and artwork don't wait on the audio, and still show if it fails
-            async let lyr = Lyrics.fetch(title: song.title, artist: song.artist, length: song.seconds, videoId: song.id)
+            async let lyr = Self.lyrics(for: song, edited: edited)
             async let art = loadArtwork(song.artwork)
             do {
                 let local = Downloads.file(for: song.id)
@@ -172,7 +181,8 @@ final class Player {
             // Checked before writing: a song skipped mid-lookup used to put its lyrics on the next one
             let found = await lyr
             guard !Task.isCancelled else { return }
-            lyrics = found
+            // Lyrics edited or reverted while this loaded are already on screen, or on their way
+            if let mine = LyricsTweaks.edited(song.id) { lyrics = Lyrics.edited(mine) } else if edited == nil { lyrics = found }
             if let image = await art {
                 artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                 updateNowPlaying()
@@ -183,6 +193,40 @@ final class Player {
                 let known = Set(queue.map(\.id))
                 queue += radio.filter { !known.contains($0.id) }
             }
+        }
+    }
+
+    nonisolated static func lyrics(for song: Song, edited: String?) async -> [LyricLine] {
+        if let edited { return Lyrics.edited(edited) }
+        return await Lyrics.fetch(title: song.title, artist: song.artist, length: song.seconds, videoId: song.id)
+    }
+
+    /// Moves the playing song's lyrics, and remembers it for that song
+    func setLyricsOffset(_ seconds: TimeInterval) {
+        guard let song = current else { return }
+        // Whole tenths, so steps of 0.1 that add back up to nothing are exactly zero
+        lyricsOffset = min(max((seconds * 10).rounded() / 10, -60), 60)
+        LyricsTweaks.setOffset(lyricsOffset, for: song.id)
+    }
+
+    /// Keeps lyrics the user wrote or changed for the playing song
+    func saveLyrics(_ text: String) {
+        guard let song = current else { return }
+        LyricsTweaks.setEdited(text, for: song.id)
+        lyrics = Lyrics.edited(text)
+        lyricsEdited = true
+    }
+
+    /// Forgets the user's lyrics for the playing song and looks them up again
+    func revertLyrics() {
+        guard let song = current else { return }
+        LyricsTweaks.setEdited(nil, for: song.id)
+        lyricsEdited = false
+        lyrics = []
+        Task {
+            let found = await Lyrics.fetch(title: song.title, artist: song.artist, length: song.seconds, videoId: song.id)
+            // Still that song, and not edited again meanwhile
+            if current?.id == song.id, !lyricsEdited { lyrics = found }
         }
     }
 

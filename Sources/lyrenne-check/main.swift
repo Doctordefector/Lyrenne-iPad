@@ -26,6 +26,23 @@ let rotated = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": "SID=n
     + [HTTPCookie(properties: [.name: "NEW", .value: "x", .domain: ".youtube.com", .path: "/"])!, HTTPCookie(properties: [.name: "HSID", .value: "", .domain: ".youtube.com", .path: "/"])!]
 precondition(InnerTube.mergeCookies("SID=old; HSID=keep", rotated) == "SID=new; HSID=keep", "cookie merge")
 
+// Lyrics edited by hand go back and forth through the editor's text unchanged
+let editedLrc = "[00:01.50]one\n[01:02.05]two"
+precondition(Lyrics.text(Lyrics.edited(editedLrc)) == editedLrc && Lyrics.edited("plain\ntext").map(\.text) == ["plain", "text"], "edited lyrics")
+// Korean in Revised Romanization, with the sound changes (desktop's RomanizerTest has the same)
+for (hangul, latin) in [("사랑해요", "saranghaeyo"), ("보고 싶어", "bogo sipeo"), ("안녕하세요", "annyeonghaseyo"),
+                        ("같이 가요", "gachi gayo"), ("좋아", "joa"), ("감사합니다", "gamsahamnida")] {
+    precondition(Korean.romanize(hangul) == latin, "Korean: \(hangul) is \(Korean.romanize(hangul))")
+}
+precondition(!Romanize.needed("Café déjà vu") && !Romanize.needed("مرحبا") && Romanize.needed("君の名は"), "which lines romanize")
+#if canImport(Darwin)
+// The system's tokenizer and transforms: printed to compare with desktop, and no script left over
+let romanized = Romanize.lines(["君の名は", "東京に行った", "Hello 世界"]).merging(Romanize.lines(["我爱你"])) { a, _ in a }
+    .merging(Romanize.lines(["Я тебя люблю"])) { a, _ in a }.merging(Romanize.lines(["Що ти робиш", "і я"])) { a, _ in a }
+for (line, latin) in romanized.sorted(by: { $0.key < $1.key }) { print("romanize: \(line) -> \(latin)") }
+precondition(romanized.count == 7 && romanized.values.allSatisfy { !Romanize.needed($0) }, "romanization: \(romanized)")
+#endif
+
 // Listen Together: a host's sync_playback (change_track with a TrackInfo) decodes, then the live
 // server answers a join for a room that doesn't exist, which proves our messages parse there
 let track = PB().string(1, "abc").string(2, "Title").string(3, "Artist").int(5, 185_000)
