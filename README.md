@@ -16,18 +16,22 @@ Ported from Lyrenne `81ac0ac` (2026-10-25).
 - Queue tab: jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
 - Synced lyrics from lrclib (tap a line to seek), plain lyrics when that's all there is
 - Keeps playing in the background and with the screen locked; lock screen / Control Center controls with artwork
-- iPad only, split view: browsing on the left, now playing and lyrics on the right
+- Listen Together (guest): join a room started in desktop or Android Lyrenne with its code; the
+  host's songs, play/pause and seeks follow here. Hosting from the iPad is not built
+- iPad only, split view: browsing on the left, now playing and lyrics on the right, over the
+  blurred cover. Gold accent and app icon from desktop
 
-Left out on purpose: Discord, Last.fm, Listen Together, equalizer, crossfade.
+Left out on purpose: Discord, Last.fm, hosting a Listen Together room, equalizer, crossfade.
 
 ## Layout
 
 | Path | What |
 |------|------|
-| `Sources/LyrenneCore/` | Foundation only, no UI, builds on Linux too. `InnerTube.swift` (search, radio, stream URLs), `Account.swift` (signed-in calls, session refresh), `Downloads.swift` (fetching audio, offline files), `Lyrics.swift` (lrclib) |
-| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `Library.swift` (sign-in, Keychain, library, playlists), `DownloadsView.swift`, `LyrenneApp.swift` (layout, search, now playing, lyrics) |
+| `Sources/LyrenneCore/` | Foundation only, no UI, builds on Linux too. `InnerTube.swift` (search, radio, stream URLs), `Account.swift` (signed-in calls, session refresh), `Downloads.swift` (fetching audio, offline files), `Lyrics.swift` (lrclib), `ListenTogether.swift` (guest client, hand-rolled protobuf for desktop's `listentogether.proto`) |
+| `Sources/Lyrenne/` | The iPad app: `Player.swift` (queue, AVPlayer, lock screen), `Library.swift` (sign-in, Keychain, library, playlists), `DownloadsView.swift`, `TogetherView.swift` (Listen Together room), `LyrenneApp.swift` (layout, search, now playing, lyrics) |
 | `Sources/lyrenne-check/` | Live end-to-end check of the core: search, radio, lyrics, per-client stream report, download, 500-song playlist paging; with `LYRENNE_COOKIE` set, the library too |
 | `Info.plist` | Merged by xtool: iPad-only family, background audio |
+| `Resources/AppIcon.png` | App icon, desktop's lyre (`icon-small.svg`) full-bleed at 1024 px |
 | `.github/workflows/ipa.yml` | Builds the unsigned `.ipa`, and runs the app on an iPad simulator with screenshots |
 
 ## Sign-in
@@ -53,6 +57,14 @@ When playback breaks: run `swift run lyrenne-check` and read its `client ...` li
 `streamClients` in `InnerTube.swift` with desktop's `YouTubeClient.kt` / `ContentAwareFallbackStrategy.kt`.
 The app's error under the player also lists each client's reason.
 
+## Listen Together
+
+Same server (`wss://metroserverx.meowery.eu/ws`) and messages as desktop's `listentogether/`.
+The iPad only joins: it sends `join_room`, follows `sync_playback` / `sync_state`, and sends
+`buffer_ready` once the host's song has loaded so the host can start everyone together.
+`lyrenne-check` decodes a sample message and, on macOS, joins a made-up room and expects the
+server's "Room not found" (Linux Foundation has no WebSockets, so that part is skipped there).
+
 ## CI and the simulator
 
 YouTube answers every client from GitHub's runners with "Sign in to confirm you're not a bot"
@@ -76,6 +88,20 @@ The .ipa is unsigned; sideloading tools sign it with a free Apple ID (create one
    On iPadOS 16+, also turn on Settings → Privacy & Security → Developer Mode.
 
 With a free Apple ID the app expires after 7 days; re-run Sideloadly (it can auto-refresh over Wi-Fi).
+
+## Working from more than one PC
+
+Everything lives in two GitHub repos; nothing machine-specific is committed. The same layout on
+every machine (Windows, Linux or Mac) keeps the relative links between them working:
+
+```bash
+git clone https://github.com/Doctordefector/Lyrenne       XTool/Windows-Linux/Lyrenne
+git clone https://github.com/Doctordefector/Lyrenne-iPad  XTool/iOS/Lyrenne-iPad
+```
+
+Pull in both before starting, push before switching machines. `.gitattributes` keeps line endings
+LF everywhere, so a checkout on Windows also builds from WSL. The WSL toolchain disk and `xtool/`
+(build output, CI screenshots) are per machine and not in git.
 
 ## Developing on Windows
 

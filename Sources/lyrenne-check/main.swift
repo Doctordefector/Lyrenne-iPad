@@ -14,6 +14,27 @@ let rotated = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": "SID=n
     + [HTTPCookie(properties: [.name: "NEW", .value: "x", .domain: ".youtube.com", .path: "/"])!, HTTPCookie(properties: [.name: "HSID", .value: "", .domain: ".youtube.com", .path: "/"])!]
 precondition(InnerTube.mergeCookies("SID=old; HSID=keep", rotated) == "SID=new; HSID=keep", "cookie merge")
 
+// Listen Together: a host's sync_playback (change_track with a TrackInfo) decodes, then the live
+// server answers a join for a room that doesn't exist, which proves our messages parse there
+let track = PB().string(1, "abc").string(2, "Title").string(3, "Artist").int(5, 185_000)
+let action = PB().string(1, "change_track").int(3, 1234).bytes(4, track.data)
+guard case .sync("change_track", let synced)? = ListenTogether.Client.decode(PB().string(1, "sync_playback").bytes(2, action.data).data)
+else { fatalError("sync_playback decode") }
+precondition(synced.track?.id == "abc" && synced.track?.duration == "3:05" && synced.position == 1234, "TrackInfo decode")
+precondition(PBMessage(Data([0x0a, 0x05, 0x61])) == nil, "truncated protobuf accepted")
+#if canImport(Darwin) // Linux Foundation's libcurl has no WebSockets
+let lt = ListenTogether.Client()
+Task { try? await Task.sleep(for: .seconds(15)); lt.leave() } // no answer: ends the stream as disconnected
+for await event in lt.join(code: "ZZZZZZ", name: "lyrenne-check") {
+    if case .ended(let why) = event {
+        print("listen together: server says \"\(why)\"")
+        precondition(why != "Disconnected from the room.", "no answer from the Listen Together server")
+        break
+    }
+}
+lt.leave()
+#endif
+
 let songs = try await InnerTube.search("Daft Punk Get Lucky")
 guard let first = songs.first, !first.title.isEmpty else { fatalError("search returned no songs") }
 print("search: \(songs.count) songs, first: \(first.title) — \(first.artist) [\(first.duration ?? "?")]")

@@ -16,6 +16,8 @@ final class Player {
     var lyrics: [LyricLine] = []
     var error: String?
     var autoplay = true
+    /// Called once a started song has loaded, or failed to (Listen Together reports it ready)
+    @ObservationIgnored var onLoaded: (@MainActor (String) -> Void)?
 
     var current: Song? { queue.indices.contains(index) ? queue[index] : nil }
 
@@ -84,6 +86,11 @@ final class Player {
         av.timeControlStatus == .paused ? av.play() : av.pause()
     }
 
+    func setPlaying(_ playing: Bool) {
+        guard av.currentItem != nil else { return }
+        playing ? av.play() : av.pause()
+    }
+
     func next() {
         if index + 1 < queue.count { start(index + 1) } else { av.pause() }
     }
@@ -127,6 +134,7 @@ final class Player {
                 guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
             }
+            onLoaded?(song.id)
             lyrics = await lyr
             guard !Task.isCancelled else { return }
             if let image = await art {

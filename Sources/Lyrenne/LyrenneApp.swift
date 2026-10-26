@@ -12,6 +12,7 @@ struct LyrenneApp: App {
     @State private var player = Player()
     @State private var session = Session()
     @State private var downloads = DownloadStore()
+    @State private var room = Room()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -20,6 +21,7 @@ struct LyrenneApp: App {
                 .environment(player)
                 .environment(session)
                 .environment(downloads)
+                .environment(room)
                 .preferredColorScheme(.dark)
                 .tint(.gold)
         }
@@ -43,6 +45,7 @@ struct ContentView: View {
                     case "Library": LibraryView()
                     case "Downloads": DownloadsView()
                     case "Queue": QueueView()
+                    case "Together": TogetherView()
                     default: SearchView()
                     }
                 }
@@ -61,7 +64,7 @@ struct ContentView: View {
 struct TabBar: View {
     @Binding var tab: String
     private let tabs = [("Search", "magnifyingglass"), ("Library", "music.note.house"),
-                        ("Downloads", "arrow.down.circle"), ("Queue", "list.bullet")]
+                        ("Downloads", "arrow.down.circle"), ("Queue", "list.bullet"), ("Together", "person.2")]
 
     var body: some View {
         HStack(spacing: 4) {
@@ -196,6 +199,7 @@ struct QueueView: View {
 
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
+    @Environment(Room.self) private var room
     @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
 
     var body: some View {
@@ -217,6 +221,13 @@ struct NowPlayingView: View {
                         .scaleEffect(player.isPlaying || player.duration == 0 ? 1 : 0.88)
                         .animation(.spring(duration: 0.5, bounce: 0.3), value: player.isPlaying)
                     VStack(spacing: 4) {
+                        if case .joined(let code) = room.status {
+                            Label("Listening together · \(code)", systemImage: "person.2.fill")
+                                .font(.caption.weight(.semibold)).foregroundStyle(Color.gold)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Color.gold.opacity(0.15), in: .capsule)
+                                .padding(.bottom, 6)
+                        }
                         Text(song.title).font(.title2.bold()).lineLimit(2)
                         Text(song.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
                     }
