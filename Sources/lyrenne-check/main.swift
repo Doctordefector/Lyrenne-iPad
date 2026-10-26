@@ -40,7 +40,8 @@ precondition(!Romanize.needed("Café déjà vu") && !Romanize.needed("مرحبا
 let romanized = Romanize.lines(["君の名は", "東京に行った", "Hello 世界"]).merging(Romanize.lines(["我爱你"])) { a, _ in a }
     .merging(Romanize.lines(["Я тебя люблю"])) { a, _ in a }.merging(Romanize.lines(["Що ти робиш", "і я"])) { a, _ in a }
 for (line, latin) in romanized.sorted(by: { $0.key < $1.key }) { print("romanize: \(line) -> \(latin)") }
-precondition(romanized.count == 7 && romanized.values.allSatisfy { !Romanize.needed($0) }, "romanization: \(romanized)")
+precondition(romanized.count == 7 && romanized.values.allSatisfy { !Romanize.needed($0) && !$0.contains("~") }
+    && romanized["東京に行った"] == "toukyou ni itta" && romanized["Я тебя люблю"] == "Ya tebya lyublyu", "romanization: \(romanized)")
 #endif
 
 // Listen Together: a host's sync_playback (change_track with a TrackInfo) decodes, then the live

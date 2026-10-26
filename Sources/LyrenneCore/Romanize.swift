@@ -67,7 +67,17 @@ public enum Romanize {
                 words.append(punctuation(surface))
             }
         }
-        return words.joined(separator: " ")
+        // The tokenizer splits a small っ off the sound it doubles (行っ / た) and spells it "~tsu"
+        // on its own. Joined back: "itta", not "i~tsu ta".
+        var joined: [String] = []
+        for word in words {
+            if let last = joined.last, last.hasSuffix("~tsu"), let first = word.first, first.isLetter {
+                joined[joined.count - 1] = String(last.dropLast(4)) + String(first) + word
+            } else {
+                joined.append(word)
+            }
+        }
+        return joined.map { $0.replacingOccurrences(of: "~tsu", with: "") }.joined(separator: " ")
         #else
         return nil
         #endif
