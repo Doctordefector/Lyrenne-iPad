@@ -9,7 +9,9 @@ Ported from Lyrenne `81ac0ac` (2026-10-25).
 
 - Search YouTube Music songs, tap one to play it and everything below it
 - Library tab: sign in with Google, then your Liked songs and playlists (Play, Shuffle, Download all)
-- Downloads tab: songs kept for offline listening; downloaded songs always play from disk
+- Downloads tab: songs kept for offline listening; downloaded songs always play from disk. They
+  are also in the Files app under **On My iPad > Lyrenne** as `Artist - Title [id].m4a` (the id is
+  how the app finds them; deleting one there removes the download)
 - Autoplay: the queue tops itself up with YouTube Music's radio for the playing song
 - Queue tab: jump to, swipe to remove. Long-press any song: Play next, Add to queue, Download
 - Synced lyrics from lrclib (tap a line to seek), plain lyrics when that's all there is
