@@ -5,6 +5,8 @@ YouTube Music desktop player. SwiftUI + AVPlayer, built with [xtool](https://git
 
 Ported from Lyrenne `81ac0ac` (2026-10-25).
 
+Made by Andrei ([Doctordefector](https://github.com/Doctordefector)) with love <3
+
 ## What it does
 
 - Search YouTube Music songs, tap one to play it and everything below it

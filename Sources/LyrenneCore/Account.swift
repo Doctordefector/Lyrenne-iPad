@@ -97,16 +97,75 @@ extension InnerTube {
 
     /// Every song of a playlist, following continuations
     public static func playlistSongs(_ browseId: String) async throws -> [Song] {
-        var json = try await post("browse", client: webRemix, body: ["browseId": browseId], auth: true)
-        var songs: [Song] = []
-        // ponytail: 50 pages (~5000 songs) cap so a broken continuation can't loop forever
-        for _ in 0..<50 {
-            songs += find("musicResponsiveListItemRenderer", in: json).compactMap(song(fromListItem:))
-            guard let token = continuationToken(in: json) else { break }
-            json = try await post("browse", client: webRemix, body: ["continuation": token], auth: true)
-        }
-        return songs
+        try await playlistPages(browseId).reduce([], +)
     }
+
+    /// A playlist page by page (~100 songs each), as they arrive. Each page's request needs the
+    /// token in the one before, so they can't be fetched in parallel; a big playlist is many
+    /// round trips, and showing each page as it lands is what keeps that from looking stuck.
+    public static func playlistPages(_ browseId: String) -> AsyncThrowingStream<[Song], Error> {
+        AsyncThrowingStream { out in
+            let task = Task {
+                do {
+                    var json = try await post("browse", client: webRemix, body: ["browseId": browseId], auth: true)
+                    // ponytail: 50 pages (~5000 songs) cap so a broken continuation can't loop forever
+                    for _ in 0..<50 {
+                        out.yield(find("musicResponsiveListItemRenderer", in: json).compactMap(song(fromListItem:)))
+                        guard let token = continuationToken(in: json), !Task.isCancelled else { break }
+                        json = try await post("browse", client: webRemix, body: ["continuation": token], auth: true)
+                    }
+                    out.finish()
+                } catch { out.finish(throwing: error) }
+            }
+            out.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    // MARK: Library edits, the requests desktop's YouTubeWrites sends
+
+    public static func setLiked(_ videoId: String, _ liked: Bool) async throws {
+        try await write(liked ? "like/like" : "like/removelike", ["target": ["videoId": videoId]])
+    }
+
+    public static func addToPlaylist(_ playlistId: String, _ videoId: String) async throws {
+        try await write("browse/edit_playlist", ["playlistId": bare(playlistId), "actions": [["action": "ACTION_ADD_VIDEO", "addedVideoId": videoId]]])
+    }
+
+    /// Removal names the playlist entry (setVideoId), not the video, so [song] must come from
+    /// that playlist's own listing
+    public static func removeFromPlaylist(_ playlistId: String, _ song: Song) async throws {
+        guard let setVideoId = song.setVideoId else { throw failure("Reload the playlist and try again") }
+        try await write("browse/edit_playlist", ["playlistId": bare(playlistId), "actions": [
+            ["action": "ACTION_REMOVE_VIDEO", "setVideoId": setVideoId, "removedVideoId": song.id],
+        ]])
+    }
+
+    /// A private playlist holding [videoIds]; returns its browseId
+    public static func createPlaylist(_ title: String, videoIds: [String] = []) async throws -> String {
+        let json = try await write("playlist/create", ["title": title, "privacyStatus": "PRIVATE", "videoIds": videoIds])
+        guard let id = json["playlistId"] as? String else { throw failure("YouTube didn't create the playlist") }
+        return "VL" + id
+    }
+
+    public static func deletePlaylist(_ playlistId: String) async throws {
+        try await write("playlist/delete", ["playlistId": bare(playlistId)])
+    }
+
+    /// An edit as the signed-in user. A refusal comes back as a JSON error (with HTTP 4xx, which
+    /// post doesn't look at) or a non-success status, so both are checked.
+    @discardableResult
+    static func write(_ endpoint: String, _ body: [String: Any]) async throws -> [String: Any] {
+        guard cookie != nil else { throw failure("Sign in to change your library") }
+        let json = try await post(endpoint, client: webRemix, body: body, auth: true)
+        if let error = json["error"] as? [String: Any] { throw failure(error["message"] as? String ?? "YouTube refused the change") }
+        if let status = json["status"] as? String, status != "STATUS_SUCCEEDED" { throw failure("YouTube answered \(status)") }
+        return json
+    }
+
+    /// Edits take the playlist id without the browse prefix
+    static func bare(_ playlistId: String) -> String { playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId }
+
+    static func failure(_ message: String) -> Error { URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: message]) }
 
     static func continuationToken(in json: [String: Any]) -> String? {
         if let c = find("continuationCommand", in: json).first?["token"] as? String { return c }

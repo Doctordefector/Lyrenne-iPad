@@ -33,7 +33,9 @@ final class Player {
             MainActor.assumeIsolated {
                 guard let self, self.av.currentItem != nil else { return }
                 self.time = t.seconds
-                if let d = self.av.currentItem?.duration.seconds, d.isFinite, d != self.duration {
+                // The listed length first: YouTube's m4a gives its full length in the header and
+                // again in its fragments, and AVPlayer adds the two, nearly doubling it
+                if let d = self.current?.seconds ?? self.av.currentItem?.duration.seconds, d.isFinite, d != self.duration {
                     self.duration = d
                     self.updateNowPlaying() // the lock screen's bar needs the length
                 }
@@ -119,7 +121,7 @@ final class Player {
         loadTask?.cancel()
         loadTask = Task {
             // Lyrics and artwork don't wait on the audio, and still show if it fails
-            async let lyr = Lyrics.fetch(title: song.title, artist: song.artist)
+            async let lyr = Lyrics.fetch(title: song.title, artist: song.artist, length: song.seconds, videoId: song.id)
             async let art = loadArtwork(song.artwork)
             do {
                 let local = Downloads.file(for: song.id)
@@ -135,8 +137,10 @@ final class Player {
                 self.error = error.localizedDescription
             }
             onLoaded?(song.id)
-            lyrics = await lyr
+            // Checked before writing: a song skipped mid-lookup used to put its lyrics on the next one
+            let found = await lyr
             guard !Task.isCancelled else { return }
+            lyrics = found
             if let image = await art {
                 artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
                 updateNowPlaying()

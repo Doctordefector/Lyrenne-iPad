@@ -17,5 +17,7 @@
     <string>Lyrenne</string>
     <key>CFBundleShortVersionString</key>
     <string>0.2.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Made by Doctordefector · GPL-3.0</string>
 </dict>
 </plist>

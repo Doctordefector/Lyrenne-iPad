@@ -13,15 +13,21 @@ struct LyrenneApp: App {
     @State private var session = Session()
     @State private var downloads = DownloadStore()
     @State private var room = Room()
+    @State private var library = LibraryStore()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                // Loaded on sign-in, not when the Library tab opens: likes show on every song row
+                .task(id: session.signedIn) { if session.signedIn { await library.load() } else { library.clear() } }
+                .alert("Not saved", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
+                } message: { Text(library.error ?? "") }
                 .environment(player)
                 .environment(session)
                 .environment(downloads)
                 .environment(room)
+                .environment(library)
                 .preferredColorScheme(.dark)
                 .tint(.gold)
         }
@@ -48,6 +54,8 @@ struct ContentView: View {
                     case "Together": TogetherView()
                     default: SearchView()
                     }
+                    Link("Made by Andrei with love <3", destination: URL(string: "https://github.com/Doctordefector")!)
+                        .font(.caption2).foregroundStyle(.secondary).padding(.vertical, 6)
                 }
                 .navigationTitle("Lyrenne")
                 .navigationDestination(for: Playlist.self) { PlaylistView(playlist: $0) }
@@ -200,6 +208,8 @@ struct QueueView: View {
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Room.self) private var room
+    @Environment(Session.self) private var session
+    @Environment(LibraryStore.self) private var library
     @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
     // Lyrics beside the player when there's room (landscape), under it otherwise (portrait split view)
     @State private var wide = true
@@ -233,6 +243,17 @@ struct NowPlayingView: View {
                         }
                         Text(song.title).font(.title2.bold()).lineLimit(2)
                         Text(song.artist).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                        if session.signedIn {
+                            let liked = library.liked.contains(song.id)
+                            Button { Task { await library.toggleLike(song) } } label: {
+                                Image(systemName: liked ? "heart.fill" : "heart")
+                                    .font(.title2).foregroundStyle(Color.gold)
+                                    .contentTransition(.symbolEffect(.replace))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 8)
+                            .accessibilityLabel(liked ? "Remove like" : "Like")
+                        }
                     }
                     .multilineTextAlignment(.center)
                     if let e = player.error {

@@ -103,16 +103,96 @@ struct LoginWebView: UIViewRepresentable {
     }
 }
 
+/// The signed-in library: its playlists, which songs are liked, and playlists' songs as last
+/// loaded whole this session. Edits show at once and are put back if YouTube refuses them:
+/// unlike desktop there's no local database here to keep a refused edit in.
+@MainActor @Observable
+final class LibraryStore {
+    var playlists: [Playlist] = []
+    var liked: Set<String> = []
+    var songs: [String: [Song]] = [:]
+    var loading = false
+    /// The last edit YouTube refused, shown as an alert
+    var error: String?
+
+    /// Playlists a song can go into. ponytail: includes saved playlists of other people, which
+    /// YouTube refuses edits to (the alert says so); the library listing doesn't mark ownership.
+    var editable: [Playlist] { playlists.filter { $0.id != Playlist.likedSongs.id } }
+
+    func load() async {
+        loading = true
+        if let found = try? await InnerTube.libraryPlaylists() { playlists = found }
+        loading = false
+        // Liked songs whole, so every song row knows its heart. Several pages on a big library,
+        // which is fine here: nothing waits on it.
+        if let likes = try? await InnerTube.playlistSongs(Playlist.likedSongs.id) {
+            songs[Playlist.likedSongs.id] = likes
+            liked = Set(likes.map(\.id))
+        }
+    }
+
+    func clear() { playlists = []; liked = []; songs = [:] }
+
+    func toggleLike(_ song: Song) async {
+        let like = !liked.contains(song.id)
+        setLiked(like, song)
+        if !(await edit(like ? "like the song" : "remove the like", { try await InnerTube.setLiked(song.id, like) })) { setLiked(!like, song) }
+    }
+
+    private func setLiked(_ like: Bool, _ song: Song) {
+        if like { liked.insert(song.id); songs[Playlist.likedSongs.id]?.insert(song, at: 0) }
+        else { liked.remove(song.id); songs[Playlist.likedSongs.id]?.removeAll { $0.id == song.id } }
+    }
+
+    func add(_ song: Song, to playlist: Playlist) async {
+        // Reloaded on next open rather than appended: the added entry's setVideoId (needed to
+        // remove it again) only comes from YouTube's listing
+        if await edit("add it to \(playlist.title)", { try await InnerTube.addToPlaylist(playlist.id, song.id) }) { songs[playlist.id] = nil }
+    }
+
+    /// Out of Liked songs means unliking it
+    func remove(_ song: Song, from playlist: Playlist) async {
+        if playlist.id == Playlist.likedSongs.id { if liked.contains(song.id) { await toggleLike(song) }; return }
+        let before = songs[playlist.id]
+        songs[playlist.id]?.removeAll { $0.setVideoId == song.setVideoId }
+        if !(await edit("remove it from \(playlist.title)", { try await InnerTube.removeFromPlaylist(playlist.id, song) })) { songs[playlist.id] = before }
+    }
+
+    func create(_ title: String, with song: Song?) async {
+        await edit("create \(title)") {
+            let id = try await InnerTube.createPlaylist(title, videoIds: song.map { [$0.id] } ?? [])
+            // Under Liked songs, where YouTube lists a new playlist too
+            playlists.insert(Playlist(id: id, title: title, subtitle: "Playlist", thumbnail: nil), at: min(1, playlists.count))
+        }
+    }
+
+    func delete(_ playlist: Playlist) async -> Bool {
+        guard await edit("delete \(playlist.title)", { try await InnerTube.deletePlaylist(playlist.id) }) else { return false }
+        playlists.removeAll { $0.id == playlist.id }
+        songs[playlist.id] = nil
+        return true
+    }
+
+    @discardableResult
+    private func edit(_ what: String, _ change: () async throws -> Void) async -> Bool {
+        do { try await change(); return true } catch {
+            self.error = "Couldn't \(what): \(error.localizedDescription)"
+            return false
+        }
+    }
+}
+
 struct LibraryView: View {
     @Environment(Session.self) private var session
-    @State private var playlists: [Playlist] = []
-    @State private var loading = false
+    @Environment(LibraryStore.self) private var library
     @State private var showLogin = false
+    @State private var naming = false
+    @State private var newName = ""
 
     var body: some View {
         Group {
             if session.signedIn {
-                List(playlists) { p in
+                List(library.playlists) { p in
                     NavigationLink(value: p) {
                         HStack(spacing: 12) {
                             AsyncImage(url: p.thumbnail) { $0.resizable().scaledToFill() } placeholder: {
@@ -130,14 +210,15 @@ struct LibraryView: View {
                     }
                 }
                 .listStyle(.plain)
-                .overlay { if loading && playlists.isEmpty { ProgressView() } }
-                .refreshable { await load() }
-                .task { if playlists.isEmpty { await load() } }
+                .overlay { if library.loading && library.playlists.isEmpty { ProgressView() } }
+                .refreshable { await library.load() }
                 .toolbar {
+                    Button("New playlist", systemImage: "plus") { naming = true }
                     Menu("Account", systemImage: "person.crop.circle") {
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { session.signOut(); playlists = [] }
+                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { session.signOut() }
                     }
                 }
+                .newPlaylistAlert(isPresented: $naming, name: $newName) { await library.create($0, with: nil) }
             } else {
                 ContentUnavailableView {
                     Label("Your library", systemImage: "person.crop.circle")
@@ -164,10 +245,20 @@ struct LibraryView: View {
         }
     }
 
-    private func load() async {
-        loading = true
-        playlists = (try? await InnerTube.libraryPlaylists()) ?? playlists
-        loading = false
+}
+
+extension View {
+    /// Asks for a playlist's name, then hands it to [create]
+    func newPlaylistAlert(isPresented: Binding<Bool>, name: Binding<String>, create: @escaping (String) async -> Void) -> some View {
+        alert("New playlist", isPresented: isPresented) {
+            TextField("Name", text: name)
+            Button("Create") {
+                let title = name.wrappedValue.trimmingCharacters(in: .whitespaces)
+                name.wrappedValue = ""
+                if !title.isEmpty { Task { await create(title) } }
+            }
+            Button("Cancel", role: .cancel) { name.wrappedValue = "" }
+        }
     }
 }
 
@@ -175,8 +266,15 @@ struct PlaylistView: View {
     let playlist: Playlist
     @Environment(Player.self) private var player
     @Environment(DownloadStore.self) private var downloads
-    @State private var songs: [Song] = []
+    @Environment(LibraryStore.self) private var library
+    @Environment(\.dismiss) private var dismiss
+    /// The pages so far, while a first load is still arriving
+    @State private var partial: [Song] = []
     @State private var loading = true
+    @State private var confirmDelete = false
+
+    /// The whole playlist once loaded (kept in the library, so edits show here), else the pages so far
+    private var songs: [Song] { library.songs[playlist.id] ?? partial }
 
     var body: some View {
         List {
@@ -185,17 +283,44 @@ struct PlaylistView: View {
                 Button { player.play(songs, at: i) } label: { SongRow(song: song) }
                     .buttonStyle(.plain)
                     .songActions(song)
+                    .swipeActions {
+                        Button(playlist.id == Playlist.likedSongs.id ? "Remove like" : "Remove", systemImage: "minus.circle", role: .destructive) {
+                            partial.removeAll { $0.id == song.id && $0.setVideoId == song.setVideoId }
+                            Task { await library.remove(song, from: playlist) }
+                        }
+                    }
             }
         }
         .listStyle(.plain)
-        .overlay { if loading { ProgressView() } else if songs.isEmpty { ContentUnavailableView("Empty playlist", systemImage: "music.note.list") } }
+        .overlay { if loading && songs.isEmpty { ProgressView() } else if !loading && songs.isEmpty { ContentUnavailableView("Empty playlist", systemImage: "music.note.list") } }
         .navigationTitle(playlist.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             Button("Download all", systemImage: "arrow.down.circle") { downloads.download(songs) }.disabled(songs.isEmpty)
+            if playlist.id != Playlist.likedSongs.id {
+                Button("Delete playlist", systemImage: "trash") { confirmDelete = true }
+            }
+        }
+        .confirmationDialog("Delete \(playlist.title)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete playlist", role: .destructive) { Task { if await library.delete(playlist) { dismiss() } } }
+        } message: {
+            Text("It's deleted from YouTube Music too.")
         }
         .task {
-            songs = (try? await InnerTube.playlistSongs(playlist.id)) ?? []
+            // Opened before this session: shown at once, then swapped for a fresh copy when that
+            // has loaded whole. First time: filled in page by page as YouTube sends them.
+            // ponytail: memory only, so a relaunch loads again; persist it if that bites
+            if library.songs[playlist.id] != nil {
+                loading = false
+                if let fresh = try? await InnerTube.playlistSongs(playlist.id) { library.songs[playlist.id] = fresh }
+                return
+            }
+            var all: [Song] = []
+            do {
+                for try await page in InnerTube.playlistPages(playlist.id) { all += page; partial = all; loading = false }
+                // Left before the last page: don't keep a partial list as if it were the playlist
+                if !Task.isCancelled { library.songs[playlist.id] = all }
+            } catch {}
             loading = false
         }
     }

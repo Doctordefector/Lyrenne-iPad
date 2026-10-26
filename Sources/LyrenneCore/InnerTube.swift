@@ -9,10 +9,15 @@ public struct Song: Identifiable, Hashable, Codable, Sendable {
     public let artist: String
     public let thumbnail: URL?
     public let duration: String?
+    /// The song's entry in the playlist it was listed from, which removing it needs. Nil elsewhere.
+    public var setVideoId: String?
 
     public init(id: String, title: String, artist: String, thumbnail: URL?, duration: String?) {
         self.id = id; self.title = title; self.artist = artist; self.thumbnail = thumbnail; self.duration = duration
     }
+
+    /// The listed length ("3:45") in seconds
+    public var seconds: TimeInterval? { duration.flatMap(LyrenneCore.seconds) }
 
     /// The cover at full size. Album art URLs carry their size (`=w60-h60-…`), so ask for a big
     /// one, as desktop's song details do; video frames (ytimg.com) stay as they are.
@@ -106,6 +111,15 @@ public enum InnerTube {
             return Song(id: id, title: text(r["title"]) ?? "", artist: text(r["shortBylineText"]) ?? "",
                         thumbnail: thumbnail(r["thumbnail"]), duration: text(r["lengthText"]))
         }
+    }
+
+    /// The text on YouTube Music's Lyrics tab, nil when the song has none
+    public static func lyrics(_ videoId: String) async throws -> String? {
+        let next = try await post("next", client: webRemix, body: ["videoId": videoId])
+        guard let id = find("browseEndpoint", in: next).lazy.compactMap({ $0["browseId"] as? String })
+            .first(where: { $0.hasPrefix("MPLYt") }) else { return nil }
+        let page = try await post("browse", client: webRemix, body: ["browseId": id])
+        return find("musicDescriptionShelfRenderer", in: page).first.flatMap { text($0["description"]) }
     }
 
     /// Same order as desktop's getStreamUrl: each client's URL gets checked (issue #17), and if
@@ -207,13 +221,16 @@ public enum InnerTube {
     }
 
     static func song(fromListItem r: [String: Any]) -> Song? {
-        guard let id = (r["playlistItemData"] as? [String: Any])?["videoId"] as? String else { return nil }
+        let item = r["playlistItemData"] as? [String: Any]
+        guard let id = item?["videoId"] as? String else { return nil }
         let cols = (r["flexColumns"] as? [[String: Any]])?.map { $0["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any] ?? [:] } ?? []
         let title = cols.first.flatMap { text($0["text"]) } ?? ""
         // Search: second column reads "Artist • Album • 3:45". Playlists: just the artist, duration in a fixed column
         let parts = cols.count > 1 ? (text(cols[1]["text"]) ?? "").components(separatedBy: " • ") : []
         let fixed = (r["fixedColumns"] as? [[String: Any]])?.first?["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
         let duration = text(fixed?["text"]) ?? parts.last.flatMap { $0.contains(":") ? $0 : nil }
-        return Song(id: id, title: title, artist: parts.first ?? "", thumbnail: thumbnail(r["thumbnail"]), duration: duration)
+        var song = Song(id: id, title: title, artist: parts.first ?? "", thumbnail: thumbnail(r["thumbnail"]), duration: duration)
+        song.setVideoId = item?["playlistSetVideoId"] as? String
+        return song
     }
 }

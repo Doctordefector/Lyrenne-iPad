@@ -92,16 +92,31 @@ private struct SongActions: ViewModifier {
     let song: Song
     @Environment(Player.self) private var player
     @Environment(DownloadStore.self) private var downloads
+    @Environment(Session.self) private var session
+    @Environment(LibraryStore.self) private var library
+    @State private var naming = false
+    @State private var newName = ""
 
     func body(content: Content) -> some View {
         content.contextMenu {
             Button("Play next", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext(song) }
             Button("Add to queue", systemImage: "text.badge.plus") { player.enqueue(song) }
+            if session.signedIn {
+                let liked = library.liked.contains(song.id)
+                Button(liked ? "Remove like" : "Like", systemImage: liked ? "heart.slash" : "heart") { Task { await library.toggleLike(song) } }
+                Menu("Add to playlist", systemImage: "music.note.list") {
+                    Button("New playlist…", systemImage: "plus") { naming = true }
+                    ForEach(library.editable) { p in
+                        Button(p.title) { Task { await library.add(song, to: p) } }
+                    }
+                }
+            }
             if downloads.isDownloaded(song.id) {
                 Button("Remove download", systemImage: "trash", role: .destructive) { downloads.delete(song.id) }
             } else if !downloads.isQueued(song.id) {
                 Button("Download", systemImage: "arrow.down.circle") { downloads.download([song]) }
             }
         }
+        .newPlaylistAlert(isPresented: $naming, name: $newName) { await library.create($0, with: song) }
     }
 }
