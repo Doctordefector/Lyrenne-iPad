@@ -13,6 +13,14 @@ public struct Song: Identifiable, Hashable, Codable, Sendable {
     public init(id: String, title: String, artist: String, thumbnail: URL?, duration: String?) {
         self.id = id; self.title = title; self.artist = artist; self.thumbnail = thumbnail; self.duration = duration
     }
+
+    /// The cover at full size. Album art URLs carry their size (`=w60-h60-…`), so ask for a big
+    /// one, as desktop's song details do; video frames (ytimg.com) stay as they are.
+    public var artwork: URL? {
+        guard let s = thumbnail?.absoluteString,
+              let r = s.range(of: #"=w\d+-h\d+"#, options: .regularExpression) else { return thumbnail }
+        return URL(string: s.replacingCharacters(in: r, with: "=w1200-h1200"))
+    }
 }
 
 /// A port of the desktop's InnerTube use: search, radio, and stream resolution.

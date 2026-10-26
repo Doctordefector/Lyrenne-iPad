@@ -6,6 +6,7 @@ struct LyrenneApp: App {
     @State private var player = Player()
     @State private var session = Session()
     @State private var downloads = DownloadStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +16,7 @@ struct LyrenneApp: App {
                 .environment(downloads)
                 .preferredColorScheme(.dark)
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { downloads.refresh() } }
     }
 }
 
@@ -133,12 +135,19 @@ struct QueueView: View {
 
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
+    @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
 
     var body: some View {
         if let song = player.current {
             HStack(spacing: 32) {
                 VStack(spacing: 20) {
-                    AsyncImage(url: song.thumbnail) { $0.resizable().scaledToFit() } placeholder: { Color.secondary.opacity(0.2) }
+                    // The full-size cover, with the list's small thumbnail (already loaded) until it
+                    // arrives. Keyed by song: reused for the next song, AsyncImage could keep
+                    // showing the previous cover.
+                    AsyncImage(url: song.artwork) { $0.resizable().scaledToFit() } placeholder: {
+                        AsyncImage(url: song.thumbnail) { $0.resizable().scaledToFit() } placeholder: { Color.secondary.opacity(0.2) }
+                    }
+                        .id(song.id)
                         .frame(maxWidth: 420, maxHeight: 420)
                         .aspectRatio(1, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -148,9 +157,15 @@ struct NowPlayingView: View {
                         Text(song.artist).foregroundStyle(.secondary)
                     }
                     if let e = player.error { Text(e).foregroundStyle(.red).font(.caption) }
-                    Slider(value: Binding(get: { player.time }, set: { player.seek($0) }), in: 0...max(player.duration, 1))
+                    // Only a drag seeks. Seeking from the binding also fired when the range changed
+                    // under it at a song switch, sending the new song to the old one's position.
+                    Slider(value: Binding(get: { scrub ?? player.time }, set: { if scrub != nil { scrub = $0 } }),
+                           in: 0...max(player.duration, 1)) { dragging in
+                        if dragging { scrub = player.time } else if let t = scrub { player.seek(t); scrub = nil }
+                    }
+                    .disabled(player.duration == 0)
                     HStack {
-                        Text(format(player.time)); Spacer(); Text(format(player.duration))
+                        Text(format(scrub ?? player.time)); Spacer(); Text(format(player.duration))
                     }
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     HStack(spacing: 48) {

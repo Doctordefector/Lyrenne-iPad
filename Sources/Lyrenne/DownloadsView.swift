@@ -5,10 +5,18 @@ import LyrenneCore
 /// in the background; with nothing playing, iOS suspends the app and the queue resumes on return.
 @MainActor @Observable
 final class DownloadStore {
-    var songs = Downloads.all()
+    var songs: [Song]
     var pending: [Song] = []
     var current: String?
     var failed: Set<String> = []
+
+    init() {
+        Downloads.migrateLegacy()
+        songs = Downloads.all()
+    }
+
+    /// Re-read the folder: songs can be deleted from the Files app while Lyrenne is in the background
+    func refresh() { songs = Downloads.all() }
 
     func download(_ list: [Song]) {
         let busy = Set(songs.map(\.id) + pending.map(\.id) + [current].compactMap { $0 })

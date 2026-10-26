@@ -8,6 +8,11 @@
     <!-- Keeps playing with the screen locked or another app open -->
     <key>UIBackgroundModes</key>
     <array><string>audio</string></array>
+    <!-- Downloads show in the Files app under On My iPad > Lyrenne -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
     <key>CFBundleDisplayName</key>
     <string>Lyrenne</string>
     <key>CFBundleShortVersionString</key>

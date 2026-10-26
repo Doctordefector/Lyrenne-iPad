@@ -3,26 +3,56 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// Offline songs: `<id>.m4a` beside `<id>.json` (the Song) in Documents/Downloads.
-/// The audio is written atomically and the json after it, so a json means a complete song.
+/// Offline songs. The audio sits in Documents, which the Files app shows under
+/// On My iPad > Lyrenne, named `Artist - Title [id].m4a`; the id in the name is how the app finds
+/// it. Each song's details are `<id>.json` in Application Support, out of the user's sight.
+/// The audio is written atomically and the json after it, so a json means a complete song, and
+/// a song deleted in Files counts as not downloaded.
 public enum Downloads {
-    public static var directory: URL {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Downloads")
+    public static var directory: URL { folder(.documentDirectory) }
+    static var infoDirectory: URL { folder(.applicationSupportDirectory, "Downloads") }
+
+    static func folder(_ base: FileManager.SearchPathDirectory, _ sub: String? = nil) -> URL {
+        var dir = FileManager.default.urls(for: base, in: .userDomainMask)[0]
+        if let sub { dir.appendPathComponent(sub) }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    static func audio(_ id: String) -> URL { directory.appendingPathComponent("\(id).m4a") }
-    static func info(_ id: String) -> URL { directory.appendingPathComponent("\(id).json") }
+    static func info(_ id: String) -> URL { infoDirectory.appendingPathComponent("\(id).json") }
+
+    static func audioName(_ song: Song) -> String {
+        // Characters Files and other apps can't take in a name, and a sane length
+        let label = "\(song.artist) - \(song.title)".map { #"/:\?*"<>|"#.contains($0) ? "-" : $0 }
+        return "\(String(label.prefix(150))) [\(song.id)].m4a"
+    }
 
     /// The downloaded file to play instead of streaming, nil when not downloaded
     public static func file(for id: String) -> URL? {
-        FileManager.default.fileExists(atPath: info(id).path) ? audio(id) : nil
+        guard FileManager.default.fileExists(atPath: info(id).path) else { return nil }
+        // ponytail: scans the folder per lookup; fine for hundreds of songs, index it past thousands
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.first { $0.hasSuffix("[\(id)].m4a") }.map { directory.appendingPathComponent($0) }
     }
 
     public static func download(_ song: Song) async throws {
-        try await fetchAudio(song.id).write(to: audio(song.id), options: .atomic)
+        try await fetchAudio(song.id).write(to: directory.appendingPathComponent(audioName(song)), options: .atomic)
         try JSONEncoder().encode(song).write(to: info(song.id), options: .atomic)
+    }
+
+    /// Downloads from the first iPad builds: `<id>.m4a` and `<id>.json` in Documents/Downloads.
+    /// Moves them to the current layout once; nothing to do afterwards.
+    public static func migrateLegacy() {
+        let fm = FileManager.default
+        let old = directory.appendingPathComponent("Downloads")
+        guard let files = try? fm.contentsOfDirectory(at: old, includingPropertiesForKeys: nil) else { return }
+        for json in files where json.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: json), let song = try? JSONDecoder().decode(Song.self, from: data) else { continue }
+            let audio = old.appendingPathComponent("\(song.id).m4a")
+            guard (try? fm.moveItem(at: audio, to: directory.appendingPathComponent(audioName(song)))) != nil else { continue }
+            try? fm.moveItem(at: json, to: info(song.id))
+        }
+        if ((try? fm.contentsOfDirectory(atPath: old.path)) ?? []).isEmpty { try? fm.removeItem(at: old) }
     }
 
     /// The whole song's audio. googlevideo refuses (403) a plain GET, an open-ended Range, and any
@@ -59,10 +89,12 @@ public enum Downloads {
 
     /// Every downloaded song, newest first
     public static func all() -> [Song] {
-        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let names = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+        let files = (try? FileManager.default.contentsOfDirectory(at: infoDirectory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files.filter { $0.pathExtension == "json" }
             .compactMap { f -> (Date, Song)? in
-                guard let data = try? Data(contentsOf: f), let song = try? JSONDecoder().decode(Song.self, from: data) else { return nil }
+                guard let data = try? Data(contentsOf: f), let song = try? JSONDecoder().decode(Song.self, from: data),
+                      names.contains(where: { $0.hasSuffix("[\(song.id)].m4a") }) else { return nil }
                 let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
                 return (date, song)
             }
@@ -71,7 +103,7 @@ public enum Downloads {
     }
 
     public static func delete(_ id: String) {
+        if let audio = file(for: id) { try? FileManager.default.removeItem(at: audio) }
         try? FileManager.default.removeItem(at: info(id))
-        try? FileManager.default.removeItem(at: audio(id))
     }
 }

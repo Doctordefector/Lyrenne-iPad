@@ -17,6 +17,10 @@ precondition(InnerTube.mergeCookies("SID=old; HSID=keep", rotated) == "SID=new; 
 let songs = try await InnerTube.search("Daft Punk Get Lucky")
 guard let first = songs.first, !first.title.isEmpty else { fatalError("search returned no songs") }
 print("search: \(songs.count) songs, first: \(first.title) — \(first.artist) [\(first.duration ?? "?")]")
+let big = try await URLSession.shared.data(from: first.artwork!)
+let small = try await URLSession.shared.data(from: first.thumbnail!)
+precondition(first.artwork!.absoluteString.contains("=w1200-h1200") && big.0.count > small.0.count * 4, "artwork not enlarged")
+print("artwork: \(small.0.count / 1024) KB thumbnail -> \(big.0.count / 1024) KB cover")
 
 let radio = try await InnerTube.radio(after: first.id)
 precondition(!radio.isEmpty, "radio empty")
@@ -40,8 +44,25 @@ let audio = try Downloads.file(for: first.id).map { try Data(contentsOf: $0) } ?
 precondition(audio.count > 500_000 && String(decoding: audio[4..<8], as: UTF8.self) == "ftyp", "download is not an m4a: \(audio.count) bytes")
 print("download: \(audio.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
 precondition(Downloads.all().contains(first), "download not listed")
+let visible = Downloads.file(for: first.id)!.lastPathComponent
+precondition(visible == "Daft Punk, Pharrell Williams & Nile Rodgers - Get Lucky (feat. Pharrell Williams and Nile Rodgers) [\(first.id)].m4a", "file name: \(visible)")
+print("download file: \(visible)")
+// Deleted from the Files app: the song is no longer downloaded
+try FileManager.default.removeItem(at: Downloads.file(for: first.id)!)
+precondition(!Downloads.all().contains(first) && Downloads.file(for: first.id) == nil, "song deleted in Files still listed")
 Downloads.delete(first.id)
-precondition(Downloads.file(for: first.id) == nil, "delete")
+
+// The first builds' layout (Documents/Downloads/<id>.m4a + .json) moves to the current one
+let legacy = Downloads.directory.appendingPathComponent("Downloads")
+try FileManager.default.createDirectory(at: legacy, withIntermediateDirectories: true)
+try audio.write(to: legacy.appendingPathComponent("\(first.id).m4a"))
+try JSONEncoder().encode(first).write(to: legacy.appendingPathComponent("\(first.id).json"))
+Downloads.migrateLegacy()
+precondition(Downloads.all() == [first] && Downloads.file(for: first.id)?.lastPathComponent == visible, "migration")
+precondition(!FileManager.default.fileExists(atPath: legacy.path), "legacy folder left behind")
+Downloads.delete(first.id)
+precondition(Downloads.file(for: first.id) == nil && Downloads.all().isEmpty, "delete")
+print("downloads: Files-visible names, deletion in Files, migration OK")
 
 // A public playlist: same parsing as the library's, and long enough to need continuations
 let top = try await InnerTube.playlistSongs("VLPLw-VjHDlEOgtH-Ce-dJzPOtIm5xTVC4t2")

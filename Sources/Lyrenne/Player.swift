@@ -22,15 +22,30 @@ final class Player {
     private let av = AVPlayer()
     private var artwork: MPMediaItemArtwork?
     private var loadTask: Task<Void, Never>?
+    private var prefetchTask: Task<Void, Never>?
+    private var statusObservation: NSKeyValueObservation?
 
     init() {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         av.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, self.av.currentItem != nil else { return }
                 self.time = t.seconds
-                if let d = self.av.currentItem?.duration.seconds, d.isFinite { self.duration = d }
-                self.isPlaying = self.av.timeControlStatus != .paused
+                if let d = self.av.currentItem?.duration.seconds, d.isFinite, d != self.duration {
+                    self.duration = d
+                    self.updateNowPlaying() // the lock screen's bar needs the length
+                }
+            }
+        }
+        // Play/pause state straight from AVPlayer. The periodic observer stops firing while
+        // paused, so reading it there left the button and the lock screen showing the old state
+        // until the next play/pause.
+        statusObservation = av.observe(\.timeControlStatus) { [weak self] player, _ in
+            let playing = player.timeControlStatus != .paused
+            Task { @MainActor in
+                guard let self, self.isPlaying != playing else { return }
+                self.isPlaying = playing
+                self.updateNowPlaying()
             }
         }
         NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -64,7 +79,10 @@ final class Player {
         queue.insert(song, at: index + 1)
     }
 
-    func toggle() { av.timeControlStatus == .paused ? av.play() : av.pause() }
+    func toggle() {
+        guard av.currentItem != nil else { return } // still loading: nothing to play yet
+        av.timeControlStatus == .paused ? av.play() : av.pause()
+    }
 
     func next() {
         if index + 1 < queue.count { start(index + 1) } else { av.pause() }
@@ -85,13 +103,17 @@ final class Player {
         guard queue.indices.contains(i) else { return }
         index = i
         let song = queue[i]
-        av.pause()
+        // Unload the previous song now, not when the next one is ready: left loaded, a play
+        // pressed while the next one loaded resumed the old song, and its position kept
+        // reporting into the new song's time and lyrics
+        av.replaceCurrentItem(with: nil)
         time = 0; duration = 0; lyrics = []; error = nil; artwork = nil
+        updateNowPlaying()
         loadTask?.cancel()
         loadTask = Task {
             // Lyrics and artwork don't wait on the audio, and still show if it fails
             async let lyr = Lyrics.fetch(title: song.title, artist: song.artist)
-            async let art = loadArtwork(song.thumbnail)
+            async let art = loadArtwork(song.artwork)
             do {
                 let local = Downloads.file(for: song.id)
                 let url = if let local { local } else { try await fetchToCache(song.id) }
@@ -100,6 +122,7 @@ final class Player {
                 av.replaceCurrentItem(with: AVPlayerItem(url: url))
                 av.play()
                 updateNowPlaying()
+                prefetchNext()
             } catch {
                 guard !Task.isCancelled else { return }
                 self.error = "Could not load audio stream:\n\(error.localizedDescription)"
@@ -119,18 +142,38 @@ final class Player {
     }
 
     /// Streams are fetched whole and played from a file: googlevideo refuses the open-ended
-    /// Range requests AVPlayer streams with (see Downloads.fetchAudio). A typical song is ~0.3 s.
+    /// Range requests AVPlayer streams with (see Downloads.fetchAudio). A typical song is ~0.3 s,
+    /// and the next one is usually already here (prefetchNext).
     private func fetchToCache(_ id: String) async throws -> URL {
-        let data = try await Downloads.fetchAudio(id)
+        let file = cacheFile(id)
+        if !FileManager.default.fileExists(atPath: file.path) {
+            try await Downloads.fetchAudio(id).write(to: file, options: .atomic)
+        }
+        // Keep only the playing song and the next; AVPlayer keeps an open file readable after unlink
+        let keep = [cacheFile(id), queue.indices.contains(index + 1) ? cacheFile(queue[index + 1].id) : file]
         let tmp = FileManager.default.temporaryDirectory
-        let file = tmp.appendingPathComponent("stream-\(id).m4a")
-        try data.write(to: file, options: .atomic)
-        // Only the playing song's file is kept; AVPlayer keeps an open file readable after unlink
         for old in (try? FileManager.default.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil)) ?? []
-        where old.lastPathComponent.hasPrefix("stream-") && old != file {
+        where old.lastPathComponent.hasPrefix("stream-") && !keep.contains(old) {
             try? FileManager.default.removeItem(at: old)
         }
         return file
+    }
+
+    private func cacheFile(_ id: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("stream-\(id).m4a")
+    }
+
+    /// Fetch the next song while this one plays, so Next and the end of a song switch at once
+    private func prefetchNext() {
+        prefetchTask?.cancel()
+        guard queue.indices.contains(index + 1) else { return }
+        let id = queue[index + 1].id
+        guard Downloads.file(for: id) == nil, !FileManager.default.fileExists(atPath: cacheFile(id).path) else { return }
+        let file = cacheFile(id)
+        prefetchTask = Task {
+            guard let data = try? await Downloads.fetchAudio(id), !Task.isCancelled else { return }
+            try? data.write(to: file, options: .atomic)
+        }
     }
 
     private func loadArtwork(_ url: URL?) async -> UIImage? {
@@ -144,7 +187,7 @@ final class Player {
             MPMediaItemPropertyTitle: song.title,
             MPMediaItemPropertyArtist: song.artist,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: time,
-            MPNowPlayingInfoPropertyPlaybackRate: av.rate,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         if let artwork { info[MPMediaItemPropertyArtwork] = artwork }

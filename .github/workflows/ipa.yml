@@ -50,15 +50,21 @@ jobs:
           xcrun simctl spawn "$ipad" launchctl list | grep -q com.lyrenne.ipad || { echo "app is not running (crashed?)"; exit 1; }
           # YouTube refuses runner IPs ("confirm you're not a bot"), so prove playback offline:
           # a spoken test tone placed as a download, played through the same AVPlayer path
-          docs="$(xcrun simctl get_app_container "$ipad" com.lyrenne.ipad data)/Documents/Downloads"
-          mkdir -p "$docs"
-          say -o /tmp/tone.aiff "Lyrenne test. This is the offline playback check, one two three four five six seven eight nine ten."
-          afconvert -f m4af -d aac /tmp/tone.aiff "$docs/demo-tone.m4a"
-          echo '{"id":"demo-tone","title":"Test tone","artist":"Offline playback check","duration":"0:08"}' > "$docs/demo-tone.json"
+          # Two of them, to see the switch to the next song reset time, title and cover
+          data="$(xcrun simctl get_app_container "$ipad" com.lyrenne.ipad data)"
+          mkdir -p "$data/Documents" "$data/Library/Application Support/Downloads"
+          for n in 1 2; do
+            say -o /tmp/tone$n.aiff "Lyrenne test, song $n. This is the offline playback check, one two three four five."
+            afconvert -f m4af -d aac /tmp/tone$n.aiff "$data/Documents/Offline check - Test tone $n [demo-tone-$n].m4a"
+            echo "{\"id\":\"demo-tone-$n\",\"title\":\"Test tone $n\",\"artist\":\"Offline check\",\"duration\":\"0:06\"}" > "$data/Library/Application Support/Downloads/demo-tone-$n.json"
+            sleep 1 # newest first: tone 2 lists first
+          done
           xcrun simctl terminate "$ipad" com.lyrenne.ipad || true
           SIMCTL_CHILD_LYRENNE_TAB=Downloads SIMCTL_CHILD_LYRENNE_DEMO=downloads xcrun simctl launch "$ipad" com.lyrenne.ipad
-          sleep 5
+          sleep 4
           xcrun simctl io "$ipad" screenshot shots/3-offline-playing.png
+          sleep 8
+          xcrun simctl io "$ipad" screenshot shots/4-next-song.png
           for tab in Library Queue; do
             xcrun simctl terminate "$ipad" com.lyrenne.ipad || true
             SIMCTL_CHILD_LYRENNE_TAB=$tab xcrun simctl launch "$ipad" com.lyrenne.ipad
