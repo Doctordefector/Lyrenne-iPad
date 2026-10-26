@@ -201,10 +201,13 @@ struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Room.self) private var room
     @State private var scrub: Double? // where the thumb is while dragging; seeks only on release
+    // Lyrics beside the player when there's room (landscape), under it otherwise (portrait split view)
+    @State private var wide = true
 
     var body: some View {
         if let song = player.current {
-            HStack(spacing: 32) {
+            let layout = wide ? AnyLayout(HStackLayout(spacing: 40)) : AnyLayout(VStackLayout(spacing: 16))
+            layout {
                 VStack(spacing: 24) {
                     // The full-size cover, with the list's small thumbnail (already loaded) until it
                     // arrives. Keyed by song: reused for the next song, AsyncImage could keep
@@ -213,7 +216,7 @@ struct NowPlayingView: View {
                         AsyncImage(url: song.thumbnail) { $0.resizable().scaledToFit() } placeholder: { Color.secondary.opacity(0.2) }
                     }
                         .id(song.id)
-                        .frame(maxWidth: 420, maxHeight: 420)
+                        .frame(maxWidth: wide ? 420 : 300, maxHeight: wide ? 420 : 300)
                         .aspectRatio(1, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                         .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
@@ -239,11 +242,11 @@ struct NowPlayingView: View {
                     }
                     controls
                 }
-                .frame(minWidth: 300, maxWidth: 420)
-                // Narrower than this, words broke mid-word in portrait
-                LyricsView().frame(minWidth: 340)
+                .frame(maxWidth: 420)
+                LyricsView()
             }
-            .padding(40)
+            .padding(wide ? 40 : 28)
+            .onGeometryChange(for: Bool.self) { $0.size.width > 760 } action: { wide = $0 }
             .background { Backdrop(url: song.artwork ?? song.thumbnail).id(song.id) }
             .animation(.easeInOut(duration: 0.6), value: song.id)
         } else {
