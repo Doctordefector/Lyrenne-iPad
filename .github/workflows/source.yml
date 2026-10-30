@@ -1,0 +1,31 @@
+# Adds each published release to source.json, the AltStore / SideStore source, so people who added
+# https://raw.githubusercontent.com/Doctordefector/Lyrenne-iPad/main/source.json get the update.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to add (e.g. v0.3.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Add the release to source.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          python3 scripts/update-source.py "$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add source.json
+          git diff --cached --quiet || { git commit -m "source.json: add $TAG"; git push; }

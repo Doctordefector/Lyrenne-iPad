@@ -1,0 +1,45 @@
+{
+  "name": "Lyrenne",
+  "identifier": "com.lyrenne.source",
+  "subtitle": "YouTube Music for iPad, with synced lyrics",
+  "description": "Lyrenne for iPad: a free, open source YouTube Music player with synced lyrics, offline downloads and background play. No ads.",
+  "iconURL": "https://raw.githubusercontent.com/Doctordefector/Lyrenne-iPad/main/Resources/AppIcon.png",
+  "headerURL": "https://doctordefector.github.io/Lyrenne/images/social-preview.png",
+  "website": "https://doctordefector.github.io/Lyrenne/ipad/",
+  "tintColor": "#A37C43",
+  "featuredApps": [
+    "com.lyrenne.ipad"
+  ],
+  "apps": [
+    {
+      "name": "Lyrenne",
+      "bundleIdentifier": "com.lyrenne.ipad",
+      "developerName": "Doctordefector",
+      "subtitle": "YouTube Music with synced lyrics",
+      "localizedDescription": "A YouTube Music player built for the iPad's big screen: browsing on the left, now playing and synced lyrics on the right.\n\n- Your real library: sign in with Google for your liked songs and playlists\n- Home, search, artist and album pages\n- Synced lyrics, with timing tweaks, editing and romanized Japanese, Korean, Chinese and Cyrillic\n- Keeps playing in the background and on the lock screen\n- Downloads for offline listening\n- Autoplay, queue, shuffle and repeat\n- Listen Together: join a room hosted in desktop or Android Lyrenne\n\nFree and open source (GPL-3.0), no ads. iPad only.",
+      "iconURL": "https://raw.githubusercontent.com/Doctordefector/Lyrenne-iPad/main/Resources/AppIcon.png",
+      "tintColor": "#A37C43",
+      "category": "entertainment",
+      "screenshots": {
+        "ipad": [
+          "https://raw.githubusercontent.com/Doctordefector/Lyrenne-iPad/main/Resources/screenshots/home.jpg"
+        ]
+      },
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {}
+      },
+      "versions": [
+        {
+          "version": "0.2.0",
+          "date": "2026-10-26T17:25:15Z",
+          "localizedDescription": "Sideload with Sideloadly or AltStore; the IPA is unsigned.\n\n- **Lyrics tools**, above the lyrics:\n  - **Timer**: move a song's lyrics earlier or later, in 0.1 or 0.5 second steps. Saved per song.\n  - **Romanization**: Japanese, Korean, Chinese, Cyrillic and other scripts show how they read, under each line. On by default.\n  - **Edit**: fix or write a song's lyrics, as plain text or with a time on each line. \"Use found lyrics instead\" goes back.\n- Everything else from the README: search, home, library, downloads, autoplay, Listen Together as a guest.",
+          "downloadURL": "https://github.com/Doctordefector/Lyrenne-iPad/releases/download/v0.2.0/Lyrenne-0.2.0.ipa",
+          "size": 2730778,
+          "minOSVersion": "17.0"
+        }
+      ]
+    }
+  ],
+  "news": []
+}

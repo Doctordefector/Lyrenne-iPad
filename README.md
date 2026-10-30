@@ -89,6 +89,14 @@ the Actions tab) and uploads `Lyrenne-iPad` as an artifact; unzip it to get `Lyr
 
 ## Installing on the iPad
 
+**With SideStore or AltStore:** add this source, then install Lyrenne from it and get updates there:
+
+```
+https://raw.githubusercontent.com/Doctordefector/Lyrenne-iPad/main/source.json
+```
+
+**With Sideloadly on Windows:**
+
 The .ipa is unsigned; sideloading tools sign it with a free Apple ID (create one at
 <https://account.apple.com>, no Apple hardware needed).
 
